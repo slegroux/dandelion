@@ -61,6 +61,27 @@ def codex_bin() -> str | None:
     return shutil.which("codex")
 
 
+def auth_status(timeout: float = 5.0) -> dict:
+    """Sign-in state of the local `codex` CLI, for Settings. Never raises.
+
+    {"installed": bool, "logged_in": bool | None (None = couldn't tell),
+     "method": "chatgpt" | "api_key" | ""}. `codex login status` exits 0 when
+    signed in; its text is never echoed, since an API-key login prints part of it.
+    """
+    import subprocess
+    codex = codex_bin()
+    if codex is None:
+        return {"installed": False, "logged_in": False, "method": ""}
+    try:
+        out = subprocess.run([codex, "login", "status"], capture_output=True, text=True, check=False,
+                             timeout=timeout, cwd=_cli_cwd())
+    except (OSError, subprocess.SubprocessError):
+        return {"installed": True, "logged_in": None, "method": ""}
+    text = (out.stdout + out.stderr).lower()
+    method = "chatgpt" if "chatgpt" in text else ("api_key" if "api key" in text else "")
+    return {"installed": True, "logged_in": out.returncode == 0, "method": method}
+
+
 def _cli_cwd() -> str:
     """A neutral scratch dir so Codex doesn't auto-load this repo as a workspace."""
     global _CLI_CWD

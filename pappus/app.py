@@ -31,6 +31,7 @@ from .claude_cli import (stream as stream_claude, call as call_claude,
                          cost_for, CLI_MODELS, AI_MODES, DEFAULT_MODE)
 from .codex_cli import stream as stream_codex, CLI_MODELS as CODEX_CLI_MODELS
 from . import secrets_store, export, libraries, nbdev_export, scaffold
+from . import claude_cli, codex_cli
 from . import groups as groupslib
 from . import paper as paperlib
 # Shared allowlist sanitizer (drops <script>, event handlers, javascript: URLs
@@ -2017,7 +2018,64 @@ def TitleEditor():
     )
 
 
+def _is_subscription_model(mid: str) -> bool:
+    """True for models served by a signed-in CLI (plan limits), not an API key."""
+    return mid in CLI_MODELS or mid in CODEX_CLI_MODELS
+
+
+def _plan_card(title, via, st, signed_in_txt, login_cmd, install_hint, used_by, note=""):
+    """One subscription card: live sign-in state plus how to sign in."""
+    if not st["installed"]:
+        status, cls = f"✗ {via} not installed", "warn"
+    elif st["logged_in"] is None:
+        status, cls = f"? couldn't read {via} sign-in status", "warn"
+    elif st["logged_in"]:
+        status, cls = signed_in_txt, "ok"
+    else:
+        status, cls = "✗ not signed in", "warn"
+    howto = ""
+    if not st["installed"]:
+        howto = Div(install_hint, cls="muted small")
+    elif not st["logged_in"]:
+        howto = Div(
+            Div("Sign in from a terminal (opens your browser). No restart needed:",
+                cls="small"),
+            Code(login_cmd, cls="prov-cmd"))
+    return Div(
+        Div(Strong(title), Span(f"  ·  via {via}", cls="muted"), cls="prov-head"),
+        Div(status, cls=f"prov-status {cls}"),
+        howto,
+        Div(f"Used by: {used_by}", cls="muted small"),
+        (Div(note, cls="muted small") if note else ""),
+        cls="prov-card",
+    )
+
+
 def SettingsPage(saved=False):
+    models = list_models()
+    label_of = {m["id"]: m["label"] for m in models}
+
+    cst = claude_cli.auth_status()
+    plan = (cst["plan"] or "").capitalize()
+    claude_ok = "✓ signed in" + (f" · {plan} plan" if plan else "") + (
+        f" · {cst['email']}" if cst["email"] else "")
+    xst = codex_cli.auth_status()
+    codex_ok = {"chatgpt": "✓ signed in · ChatGPT plan",
+                "api_key": "✓ signed in with an API key (billed per token, not a plan)",
+                }.get(xst["method"], "✓ signed in")
+    plan_cards = [
+        _plan_card("Claude subscription (Pro / Max)", "claude CLI", cst, claude_ok,
+                   "claude auth login",
+                   "Install Claude Code (claude.com/claude-code), then sign in with: claude auth login",
+                   "the “Claude · Fable / Sonnet / Opus” models",
+                   "Pappus hides ANTHROPIC_API_KEY from these calls, so they always use "
+                   "your plan and never bill API credits."),
+        _plan_card("ChatGPT subscription (Plus / Pro)", "codex CLI", xst, codex_ok,
+                   "codex login",
+                   "Install the Codex CLI (npm i -g @openai/codex), then sign in with: codex login",
+                   "the “Codex · GPT” models"),
+    ]
+
     rows = []
     for s in secrets_store.status():
         is_default = s["model"] == STATE["model"]
@@ -2034,9 +2092,15 @@ def SettingsPage(saved=False):
             Input(type="password", name=s["env"],
                   placeholder=("leave blank to keep current" if s["set"] else f"paste {s['label']} API key"),
                   cls="keyinput"),
-            Div(f"env var: {s['env']}", cls="muted small"),
+            Div(f"Used by: the “{label_of.get(s['model'], s['model'])}” model  ·  "
+                f"env var: {s['env']}", cls="muted small"),
             cls="prov-card",
         ))
+
+    def _opts(pred):
+        return [Option(m["label"], value=m["id"], selected=(m["id"] == STATE["model"]))
+                for m in models if pred(m["id"])]
+
     return Html(
         Head(Title("Settings · Pappus"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
         Body(Div(
@@ -2044,16 +2108,27 @@ def SettingsPage(saved=False):
                 Div(A("←  Back", href="/", cls="back"), Div("Settings", cls="title"),
                     cls="settings-top"),
                 (Div("✓ Saved.", cls="saved") if saved else ""),
-                Div("API keys for the model providers. Keys are stored locally in "
-                    f"{secrets_store.secrets_path()} (chmod 600) and never committed.",
+                Div("Ask AI reaches a model one of two ways. A ", Strong("subscription"),
+                    " uses the plan you already pay for: sign in once with the provider's "
+                    "command-line tool, no key needed. An ", Strong("API key"),
+                    " is billed per token to that provider's account. Each model in the "
+                    "picker uses exactly one of these.",
                     cls="settings-intro"),
+                Div("Subscription", Span(" · sign in, no key, uses your plan", cls="muted"),
+                    cls="settings-h"),
+                *plan_cards,
                 Form(
+                    Div("API keys", Span(" · billed per token", cls="muted"), cls="settings-h"),
+                    Div("Only needed for the models listed on each card. Keys are stored "
+                        f"locally in {secrets_store.secrets_path()} (chmod 600) and never "
+                        "committed; an env var of the same name overrides the file.",
+                        cls="settings-intro"),
                     *rows,
-                    Div(Label("Default model ",
-                              Select(*[Option(m["label"], value=m["id"],
-                                              selected=(m["id"] == STATE["model"]))
-                                       for m in list_models()],
-                                     name="default_model")),
+                    Div("Default model", cls="settings-h"),
+                    Div(Select(Optgroup(*_opts(_is_subscription_model), label="Subscription"),
+                               Optgroup(*_opts(lambda i: not _is_subscription_model(i)),
+                                        label="API key (billed per token)"),
+                               name="default_model", cls="keyinput"),
                         cls="prov-card"),
                     Button("Save", cls="save-btn", type="submit"),
                     method="post", action="/settings",

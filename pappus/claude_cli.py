@@ -278,6 +278,31 @@ def _env() -> dict:
     return env
 
 
+def auth_status(timeout: float = 5.0) -> dict:
+    """Sign-in state of the local `claude` CLI, for Settings. Never raises.
+
+    {"installed": bool, "logged_in": bool | None (None = couldn't tell),
+     "plan": e.g. "max", "email": str}. Probed with the same env the prompts use,
+    so an exported ANTHROPIC_API_KEY can't make a logged-out CLI look signed in.
+    """
+    import subprocess
+    claude = claude_bin()
+    if claude is None:
+        return {"installed": False, "logged_in": False, "plan": "", "email": ""}
+    try:
+        out = subprocess.run([claude, "auth", "status"], capture_output=True, text=True, check=False,
+                             timeout=timeout, env=_env(), cwd=_cli_cwd())
+        data = json.loads(out.stdout or "{}")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {"installed": True, "logged_in": None, "plan": "", "email": ""}
+    return {
+        "installed": True,
+        "logged_in": bool(data.get("loggedIn")),
+        "plan": str(data.get("subscriptionType") or ""),
+        "email": str(data.get("email") or ""),
+    }
+
+
 def _model_config(model_id: str | None) -> tuple[str | None, str | None]:
     """Map Pappus model ids to Claude Code --model/--effort flags."""
     if model_id in _CLI_MODEL_CONFIG:
