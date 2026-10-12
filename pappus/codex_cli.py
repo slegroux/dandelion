@@ -73,13 +73,20 @@ def auth_status(timeout: float = 5.0) -> dict:
     if codex is None:
         return {"installed": False, "logged_in": False, "method": ""}
     try:
-        out = subprocess.run([codex, "login", "status"], capture_output=True, text=True, check=False,
+        out = subprocess.run([codex, "login", "status"], capture_output=True, check=False,
+                             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
                              timeout=timeout, cwd=_cli_cwd())
     except (OSError, subprocess.SubprocessError):
         return {"installed": True, "logged_in": None, "method": ""}
     text = (out.stdout + out.stderr).lower()
     method = "chatgpt" if "chatgpt" in text else ("api_key" if "api key" in text else "")
-    return {"installed": True, "logged_in": out.returncode == 0, "method": method}
+    if out.returncode == 0:
+        logged_in = True
+    elif "not logged in" in text:
+        logged_in = False
+    else:
+        logged_in = None                    # usage error / crash: can't tell
+    return {"installed": True, "logged_in": logged_in, "method": method}
 
 
 def _cli_cwd() -> str:

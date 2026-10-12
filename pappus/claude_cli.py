@@ -278,28 +278,36 @@ def _env() -> dict:
     return env
 
 
-def auth_status(timeout: float = 5.0) -> dict:
+def auth_status(timeout: float = 8.0) -> dict:
     """Sign-in state of the local `claude` CLI, for Settings. Never raises.
 
     {"installed": bool, "logged_in": bool | None (None = couldn't tell),
-     "plan": e.g. "max", "email": str}. Probed with the same env the prompts use,
-    so an exported ANTHROPIC_API_KEY can't make a logged-out CLI look signed in.
+     "plan": e.g. "max", "email": str, "method": e.g. "claude.ai", "provider": str}.
+    Probed with the same env the prompts use, so an exported ANTHROPIC_API_KEY can't
+    make a logged-out CLI look signed in. The CLI is slow to start (3+ s cold).
     """
     import subprocess
+    blank = {"installed": True, "logged_in": None, "plan": "", "email": "",
+             "method": "", "provider": ""}
     claude = claude_bin()
     if claude is None:
-        return {"installed": False, "logged_in": False, "plan": "", "email": ""}
+        return {**blank, "installed": False, "logged_in": False}
     try:
-        out = subprocess.run([claude, "auth", "status"], capture_output=True, text=True, check=False,
+        out = subprocess.run([claude, "auth", "status"], capture_output=True, check=False,
+                             encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL,
                              timeout=timeout, env=_env(), cwd=_cli_cwd())
-        data = json.loads(out.stdout or "{}")
+        data = json.loads(out.stdout) if out.stdout.strip() else None
     except (OSError, subprocess.SubprocessError, ValueError):
-        return {"installed": True, "logged_in": None, "plan": "", "email": ""}
+        return blank
+    if not isinstance(data, dict) or "loggedIn" not in data:
+        return blank
     return {
         "installed": True,
         "logged_in": bool(data.get("loggedIn")),
         "plan": str(data.get("subscriptionType") or ""),
         "email": str(data.get("email") or ""),
+        "method": str(data.get("authMethod") or ""),
+        "provider": str(data.get("apiProvider") or ""),
     }
 
 

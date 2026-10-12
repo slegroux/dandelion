@@ -1632,16 +1632,12 @@ def test_cell_exec_route_reruns_stored_content():
     assert b.messages("exec/route")[-1].output                 # re-ran stored source
 
 
-def test_page_includes_htmx_so_cell_buttons_work(monkeypatch):
+def test_page_includes_htmx_so_cell_buttons_work():
     # Regression guard: we return a full Html document, so FastHTML does NOT
     # auto-inject its headers — the page must carry htmx itself, or every
     # per-cell hx-post button (Run/Mute/Pin/Delete) renders but does nothing.
     import pappus.app as app
     from fasthtml.common import to_xml
-    monkeypatch.setattr(app.claude_cli, "auth_status",
-                        lambda: {"installed": False, "logged_in": False, "plan": "", "email": ""})
-    monkeypatch.setattr(app.codex_cli, "auth_status",
-                        lambda: {"installed": False, "logged_in": False, "method": ""})
     assert "htmx" in to_xml(app.Page()).lower()
     assert "htmx" in to_xml(app.SettingsPage()).lower()
 

@@ -18,6 +18,8 @@ import os
 import re
 import secrets
 import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
 from fasthtml.common import *
@@ -2023,19 +2025,38 @@ def _is_subscription_model(mid: str) -> bool:
     return mid in CLI_MODELS or mid in CODEX_CLI_MODELS
 
 
-def _plan_card(title, via, st, signed_in_txt, login_cmd, install_hint, used_by, note=""):
+_AUTH_TTL = 30.0                 # seconds; Save shouldn't re-probe two slow CLIs
+_AUTH_CACHE: dict = {"at": 0.0, "val": None}
+_AUTH_LOCK = threading.Lock()
+
+
+def _clear_auth_cache():
+    with _AUTH_LOCK:
+        _AUTH_CACHE.update(at=0.0, val=None)
+
+
+def _auth_probes() -> tuple[dict, dict]:
+    """(claude, codex) sign-in states: probed concurrently, cached for _AUTH_TTL."""
+    with _AUTH_LOCK:
+        if _AUTH_CACHE["val"] is not None and time.monotonic() - _AUTH_CACHE["at"] < _AUTH_TTL:
+            return _AUTH_CACHE["val"]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        c, x = pool.submit(claude_cli.auth_status), pool.submit(codex_cli.auth_status)
+        val = (c.result(), x.result())
+    with _AUTH_LOCK:
+        _AUTH_CACHE.update(at=time.monotonic(), val=val)
+    return val
+
+
+def _plan_card(title, *, via, st, status, status_cls, login_cmd, check_cmd, install_hint,
+               used_by, note="", extra=""):
     """One subscription card: live sign-in state plus how to sign in."""
-    if not st["installed"]:
-        status, cls = f"✗ {via} not installed", "warn"
-    elif st["logged_in"] is None:
-        status, cls = f"? couldn't read {via} sign-in status", "warn"
-    elif st["logged_in"]:
-        status, cls = signed_in_txt, "ok"
-    else:
-        status, cls = "✗ not signed in", "warn"
     howto = ""
     if not st["installed"]:
         howto = Div(install_hint, cls="muted small")
+    elif st["logged_in"] is None:
+        howto = Div(f"Run `{check_cmd}` in a terminal to check.",
+                    cls="muted small")
     elif not st["logged_in"]:
         howto = Div(
             Div("Sign in from a terminal (opens your browser). No restart needed:",
@@ -2043,37 +2064,59 @@ def _plan_card(title, via, st, signed_in_txt, login_cmd, install_hint, used_by, 
             Code(login_cmd, cls="prov-cmd"))
     return Div(
         Div(Strong(title), Span(f"  ·  via {via}", cls="muted"), cls="prov-head"),
-        Div(status, cls=f"prov-status {cls}"),
+        Div(status, cls=f"prov-status {status_cls}"),
         howto,
         Div(f"Used by: {used_by}", cls="muted small"),
         (Div(note, cls="muted small") if note else ""),
+        (Div(extra, cls="muted small") if extra else ""),
         cls="prov-card",
     )
+
+
+def _card_state(st, via, signed_in):
+    """(status text, css class) shared by the cards; `signed_in` is (text, cls)."""
+    if not st["installed"]:
+        return f"✗ {via} not installed", "warn"
+    if st["logged_in"] is None:
+        return f"? couldn't read {via} sign-in status", "warn"
+    if not st["logged_in"]:
+        return "✗ not signed in", "warn"
+    return signed_in
 
 
 def SettingsPage(saved=False):
     models = list_models()
     label_of = {m["id"]: m["label"] for m in models}
 
-    cst = claude_cli.auth_status()
+    cst, xst = _auth_probes()
     plan = (cst["plan"] or "").capitalize()
-    claude_ok = "✓ signed in" + (f" · {plan} plan" if plan else "") + (
-        f" · {cst['email']}" if cst["email"] else "")
-    xst = codex_cli.auth_status()
-    codex_ok = {"chatgpt": "✓ signed in · ChatGPT plan",
-                "api_key": "✓ signed in with an API key (billed per token, not a plan)",
-                }.get(xst["method"], "✓ signed in")
+    on_plan = cst["method"] == "claude.ai" or (not cst["method"] and bool(plan))
+    if on_plan:
+        claude_in = ("✓ signed in" + (f" · {plan} plan" if plan else "") + (
+            f" · {cst['email']}" if cst["email"] else ""), "ok")
+    else:
+        how = cst["method"] or "an unknown method"
+        claude_in = (f"signed in with {how} — billed to that account, not a plan", "warn")
+    cstatus, ccls = _card_state(cst, "claude CLI", claude_in)
+    codex_in = {"chatgpt": ("✓ signed in · ChatGPT plan", "ok"),
+                "api_key": ("✓ signed in with an API key (billed per token, not a plan)", "warn"),
+                }.get(xst["method"], ("✓ signed in", "ok"))
+    xstatus, xcls = _card_state(xst, "codex CLI", codex_in)
+    signed_in_claude = cst["installed"] and cst["logged_in"]
     plan_cards = [
-        _plan_card("Claude subscription (Pro / Max)", "claude CLI", cst, claude_ok,
-                   "claude auth login",
-                   "Install Claude Code (claude.com/claude-code), then sign in with: claude auth login",
-                   "the “Claude · Fable / Sonnet / Opus” models",
-                   "Pappus hides ANTHROPIC_API_KEY from these calls, so they always use "
-                   "your plan and never bill API credits."),
-        _plan_card("ChatGPT subscription (Plus / Pro)", "codex CLI", xst, codex_ok,
-                   "codex login",
-                   "Install the Codex CLI (npm i -g @openai/codex), then sign in with: codex login",
-                   "the “Codex · GPT” models"),
+        _plan_card("Claude subscription (Pro / Max)", via="claude CLI", st=cst,
+                   status=cstatus, status_cls=ccls, login_cmd="claude auth login",
+                   check_cmd="claude auth status",
+                   install_hint="Install Claude Code (claude.com/claude-code), then sign in with: claude auth login",
+                   used_by="the “Claude · Fable / Sonnet / Opus” models",
+                   note=("Pappus hides ANTHROPIC_API_KEY from these calls, so they always use "
+                         "your plan and never bill API credits.") if signed_in_claude and on_plan else "",
+                   extra=("If Ask AI reports an expired session, run claude auth login."
+                          if signed_in_claude else "")),
+        _plan_card("ChatGPT subscription (Plus / Pro)", via="codex CLI", st=xst,
+                   status=xstatus, status_cls=xcls, login_cmd="codex login", check_cmd="codex login status",
+                   install_hint="Install the Codex CLI (npm i -g @openai/codex), then sign in with: codex login",
+                   used_by="the “Codex · GPT” models"),
     ]
 
     rows = []
@@ -2101,6 +2144,10 @@ def SettingsPage(saved=False):
         return [Option(m["label"], value=m["id"], selected=(m["id"] == STATE["model"]))
                 for m in models if pred(m["id"])]
 
+    groups = [Optgroup(*opts, label=lbl) for lbl, opts in (
+        ("Subscription", _opts(_is_subscription_model)),
+        ("API key (billed per token)", _opts(lambda i: not _is_subscription_model(i)))) if opts]
+
     return Html(
         Head(Title("Settings · Pappus"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
         Body(Div(
@@ -2125,10 +2172,8 @@ def SettingsPage(saved=False):
                         cls="settings-intro"),
                     *rows,
                     Div("Default model", cls="settings-h"),
-                    Div(Select(Optgroup(*_opts(_is_subscription_model), label="Subscription"),
-                               Optgroup(*_opts(lambda i: not _is_subscription_model(i)),
-                                        label="API key (billed per token)"),
-                               name="default_model", cls="keyinput"),
+                    Div(Select(*groups, name="default_model", id="default_model",
+                               aria_label="Default model", cls="keyinput"),
                         cls="prov-card"),
                     Button("Save", cls="save-btn", type="submit"),
                     method="post", action="/settings",
