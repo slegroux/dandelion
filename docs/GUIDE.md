@@ -63,7 +63,7 @@ every dependency for you, so you never touch `pip` or a venv by hand.
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. get the repo
-git clone https://github.com/slegroux/pappus.git dandelion && cd dandelion
+git clone https://github.com/slegroux/dandelion.git && cd dandelion
 
 # 3. install EVERYTHING up front — the base app, the kernel's numpy/torch/… stack,
 #    `paper` (marker — REQUIRED to open PDFs: structure, sections, equations,
