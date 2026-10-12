@@ -219,7 +219,9 @@ a.conv-dup{box-sizing:border-box}
 .prov-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-bottom:14px}
 .prov-head{margin-bottom:4px}
 .prov-status{font-size:13px;margin-bottom:9px}
-.prov-status.ok{color:var(--ok-ink)}.prov-status.off{color:var(--muted)}
+.prov-status.ok{color:var(--ok-ink)}.prov-status.off{color:var(--muted)}.prov-status.warn{color:var(--warn-ink2)}
+.settings-h{font-weight:600;font-size:15px;margin:26px 0 10px}
+.prov-cmd{display:inline-block;margin:6px 0 4px;padding:5px 10px;border-radius:7px;background:var(--surface);border:1px solid var(--line);font-size:13px;user-select:all}
 .keyinput{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font:inherit;background:var(--surface);color:var(--ink);outline:none}
 .keyinput:focus{border-color:var(--accent)}
 .muted{color:var(--muted)}.small{font-size:12px;margin-top:6px}
