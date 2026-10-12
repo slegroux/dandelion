@@ -132,7 +132,7 @@ function links back to the cell you wrote it in.
 
 | | |
 |---|---|
-| **[Editable cells](docs/GUIDE.md#editable-cells-solveit-style)** | Rendered by default, click to edit; headings fold into sections |
+| **[Editable cells](docs/GUIDE.md#editable-cells)** | Rendered by default, click to edit; headings fold into sections |
 | **[Linked cells](docs/GUIDE.md#link-to-any-cell)** | `#_<id>` links within and across dialogs; the AI can cite cells too |
 | **[Live completion](docs/GUIDE.md#code-completion)** | From what you've actually run, via jedi |
 | **[Live values in prompts](docs/GUIDE.md#inject-live-values-into-a-prompt)** | `` $`df.shape` `` sends the real number |
@@ -161,7 +161,7 @@ uv run python -m dandelion.cli doctor h100    # DNS, port, token, route: exactly
 Then switch targets from the dropdown in the top bar. Code runs on the bundled
 kernel server by default; with the `solveit` extra, Dandelion can instead connect to a
 SolveIt server through Answer.AI's `solveit_client`. See
-[the guide](docs/GUIDE.md#connect-a-real-server-right-now-no-proprietary-solveit-needed).
+[the guide](docs/GUIDE.md#connecting-to-a-solveit-server).
 
 ## Development
 
@@ -179,6 +179,7 @@ just dev      # kernel + UI in the foreground; Ctrl+C stops both
 | `dandelion/claude_cli.py`, `codex_cli.py` | Ask AI over your Claude or ChatGPT subscription |
 | `site/` | The [landing page](https://slegroux.github.io/pappus/) |
 
-> **Renamed from SolveIt Sidekick.** On first start, Dandelion moves your data from
-> `~/.config/solveit-sidekick` to `~/.config/dandelion` and leaves a link at the old
-> path. `SIDEKICK_*` settings still work as their `DANDELION_*` equivalents.
+> **Renamed from Pappus** (and before that, SolveIt Sidekick). On first start,
+> Dandelion moves your data from `~/.config/pappus` to `~/.config/dandelion` and
+> leaves a link at the old path; converted papers keep their cache. `PAPPUS_*` and
+> `SIDEKICK_*` settings still work as their `DANDELION_*` equivalents.

@@ -7,53 +7,49 @@ version, see the [README](../README.md).
 - [What's here](#whats-here)
 - [Quick start](#quick-start)
 - [Setup](#setup)
-- [Connect a real server right now (no proprietary SolveIt needed)](#connect-a-real-server-right-now-no-proprietary-solveit-needed)
+- [The bundled kernel server](#the-bundled-kernel-server)
   - [Run it like a Mac app](#run-it-like-a-mac-app)
+  - [Connecting to a SolveIt server](#connecting-to-a-solveit-server)
 - [Two dependency groups: the server vs your coding stack](#two-dependency-groups-the-server-vs-your-coding-stack)
 - [Models & API keys](#models--api-keys)
   - [Which tools the AI may use](#which-tools-the-ai-may-use)
 - [Use it](#use-it)
-  - [Editable cells (SolveIt-style)](#editable-cells-solveit-style)
+  - [Editable cells](#editable-cells)
 - [Your work is saved](#your-work-is-saved)
 - [Building a Python library from your dialogs](#building-a-python-library-from-your-dialogs)
   - [Step by step](#step-by-step)
   - [How it works](#how-it-works)
 - [Reading papers (and web pages)](#reading-papers-and-web-pages)
   - [Or step through it, the way Jeremy Howard does](#or-step-through-it-the-way-jeremy-howard-does)
-- [Pain points this targets](#pain-points-this-targets)
-- [Assumptions (correct me if wrong)](#assumptions-correct-me-if-wrong)
 
 ## The core idea
 
-SolveIt's own client (`solveit_client`) already connects to *any* server URL:
-it defaults to `http://localhost:5001` and takes `SOLVEIT_URL` for hosted
-instances. So "local vs H100" is just **which target the client points at**.
-
-Dandelion turns that into a first-class switch:
+A **target** is just the server URL the client points at, so "laptop vs H100" is
+a dropdown, not a different setup:
 
 ```
-┌───────────┐       local → http://localhost:5001                    (laptop)
-│ Dandelion UI │ ────► h100  → http://localhost:5101 ⇢ SSH ⇢ H100:5001
-└───────────┘       (the H100's port is tunnelled to localhost,
-                     so it never touches the public internet)
+┌──────────────┐      kernel → http://localhost:5055                 (laptop)
+│ Dandelion UI │ ───► h100   → http://localhost:5101 ⇢ SSH ⇢ H100:5001
+└──────────────┘      (the H100's port is tunnelled to localhost,
+                       so it never touches the public internet)
 ```
 
-Same UI, same client code, both targets. The only difference is the active
+Same UI, same client code, every target. The only difference is the active
 profile in `targets.yaml`.
 
 ## What's here
 
 | File | Purpose |
 |------|---------|
-| `targets.yaml`        | Define `local` and `h100` targets (URL, token, SSH) |
+| `targets.yaml`        | Define the `kernel`, `local` and `h100` targets (URL, token, SSH) |
 | `dandelion/targets.py` | Load/resolve profiles (token from env, graceful if unset) |
 | `dandelion/tunnel.py`  | Open/close the SSH tunnel to the H100, wait until live |
 | `dandelion/doctor.py`  | Diagnose connection/setup (DNS, port, token, `/test_route`) |
-| `dandelion/client.py`  | Wrap `solveit_client`; fall back to an in-memory mock |
+| `dandelion/client.py`  | One `connect()` over the bundled kernel, `solveit_client`, and an in-memory mock |
 | `dandelion/app.py`     | The web UI (FastHTML), styled like the Claude desktop app |
 | `dandelion/cli.py`     | `dandelion targets / doctor / up / serve` |
 
-The mock fallback means the UI runs **with no SolveIt server at all** — handy for
+The mock fallback means the UI runs **with no server at all** — handy for
 trying the interface or developing it away from the H100. When a real target is
 reachable it talks to it directly.
 
@@ -115,14 +111,14 @@ Edit `targets.yaml` and set the `h100.ssh.host` to your H100 (an entry in
 `~/.ssh/config`, or `user@1.2.3.4`).
 
 > Prefer pip? It still works: `pip install python-fasthtml pyyaml uvicorn`
-> (add `solveit_client` for the real SolveIt server), then drop the `uv run`
+> (add `solveit_client` to connect to a SolveIt server), then drop the `uv run`
 > prefix from the commands below.
 
-## Connect a real server right now (no proprietary SolveIt needed)
+## The bundled kernel server
 
-Answer.AI's hosted SolveIt server image isn't self-hostable, so this repo bundles
-a small **SolveIt-compatible kernel server** that genuinely executes code. It's
-the fastest way to see the interface go *live* (green LED) end-to-end:
+Code runs on a small **kernel server** that ships with Dandelion and genuinely
+executes Python. It's the fastest way to see the interface go *live* (green LED)
+end-to-end:
 
 ```bash
 # one command — start the kernel server AND the UI together (Ctrl+C stops both):
@@ -167,8 +163,13 @@ tunnels it back.
 > pass `--token` if you expose the port directly. Likewise, `dandelion serve` binds
 > `127.0.0.1` by default — set `DANDELION_HOST=0.0.0.0` to expose the UI on your LAN.
 
-When you have access to the real Answer.AI SolveIt server, just point the `local`
-or `h100` targets at it (they use `backend: solveit` via `solveit_client`) — same UI.
+### Connecting to a SolveIt server
+
+The kernel server speaks the same API as Answer.AI's `solveit_client`, so
+Dandelion can also talk to a SolveIt server: install the `solveit` extra and point
+the `local` or `h100` target at it (`backend: solveit`). `solveit_client` defaults
+to `http://localhost:5001` and accepts a dummy token on localhost; for a hosted
+instance, set the target's `url` to it and drop the SSH tunnel.
 
 ## Two dependency groups: the server vs your coding stack
 
@@ -187,7 +188,7 @@ Dandelion keeps two kinds of dependency apart, because they serve different jobs
 | `kernel` (alias `ml`) | numpy, pandas, matplotlib, scikit-learn, scipy, torch | wherever the **kernel** runs |
 | `paper` | marker-pdf | app, for high-quality PDF → markdown |
 | `web` | trafilatura | app, for clean web-page/blog → markdown |
-| `solveit` | solveit_client | app, to talk to a real SolveIt server |
+| `solveit` | solveit_client | app, to connect to a SolveIt server |
 | `all` | kernel + paper + web + solveit | a full local workstation |
 
 ```bash
@@ -227,9 +228,8 @@ notebook-cell MCP tools described below.
 }
 ```
 
-The **defaults** (no file needed) keep the SolveIt posture: **web research is
-allowed** — a thinking-partner tool (SolveIt's own `dialoghelper` ships
-`search`/`read_url`), so the AI can ground answers in current facts instead of its
+The **defaults** (no file needed) keep the AI a thinking partner: **web research
+is allowed**, so the AI can ground answers in current facts instead of its
 training cutoff — while the **executor's hands are denied** (`Write`/`Edit`/`Bash`:
 running code or working off-screen is your job, not the AI's). Edit the lists to
 taste; set `"deny": []` to fully open it up. The cell-editing tools are wired
@@ -251,7 +251,7 @@ uv run python -m dandelion.cli serve        # http://localhost:8000
 In the UI, the top-right dropdown flips between `local` and `h100`. A green LED =
 live server; amber = running on the mock (with a banner telling you why).
 
-### Editable cells (SolveIt-style)
+### Editable cells
 
 Every message is a live cell, like a notebook:
 
@@ -278,7 +278,7 @@ and still count toward the AI context (use **Mute** to drop a cell from context)
 
 #### Link to any cell
 
-Every cell has a stable id, and you can link to it — SolveIt-style. Hover a cell
+Every cell has a stable id, and you can link to it. Hover a cell
 and click the **🔗** button to copy its **`#_<id>` anchor** (that's exactly the
 string you paste to reference it — the copy button *is* the id-getter, so you
 never hunt for one).
@@ -324,7 +324,7 @@ becomes the new source) and clears any stale output.
 
 #### Code completion
 
-In a code cell, completion suggestions appear **as you type** (SolveIt-style) —
+In a code cell, completion suggestions appear **as you type** —
 or press **`Ctrl+Space`** to summon them. **`Tab`** (or `Enter`) accepts the
 highlighted one; `Esc` dismisses. It's **namespace-aware**: completions come from
 the kernel's live state via [jedi](https://github.com/davidhalter/jedi), so after
@@ -337,7 +337,7 @@ targets don't offer it, and it's part of the `kernel` extra.
 
 #### The AI sees the notebook
 
-Like a real SolveIt dialog, an *Ask AI* cell isn't answered in isolation — the
+An *Ask AI* cell isn't answered in isolation — the
 **cells above it** (notes, code, code output, prior Q&A) are sent as context, so
 you can ask "what did that return?" or "why is this slow?" and it knows.
 
@@ -355,14 +355,14 @@ dialog reads out the total context (`AI context ≈ N tokens · M/K cells in`) �
 you can see yourself approaching the limit. **Pin** a cell (toggle next to Mute)
 to keep it in context even when older cells are trimmed.
 
-This applies to the bundled **kernel** backend. On a real **solveit** target,
-SolveIt's server assembles the dialog context itself.
+This applies to the bundled **kernel** backend. On a **solveit** target,
+the server assembles the dialog context itself.
 
 #### Inject live values into a prompt
 
 Put `` $`expr` `` anywhere in an *Ask AI* prompt and it's replaced with the value
 of that Python expression — evaluated against the **live kernel namespace, fresh
-each time you send** (SolveIt's variable-injection syntax). So after you run
+each time you send**. So after you run
 `df = pd.read_csv(...)`, asking
 
 > Why might `` $`df.shape` `` rows drop to `` $`len(df.dropna())` `` after dropna?
@@ -377,14 +377,14 @@ alone, and an expression that errors (a typo'd name) becomes a visible
 the rest of your question.
 
 This needs the **kernel** backend (the expression runs in its namespace); the
-mock target leaves `` $`…` `` literal, and a real **solveit** target does its own
+mock target leaves `` $`…` `` literal, and a **solveit** target does its own
 injection server-side. Oversized values are truncated so one big object can't blow
 the prompt open.
 
 #### AI modes — learning / concise / standard
 
-Next to the model picker in the composer is a **mode** dropdown (SolveIt's
-`learning` / `concise` / `standard`) that tunes *how* the AI responds. The
+Next to the model picker in the composer is a **mode** dropdown
+(`learning` / `concise` / `standard`) that tunes *how* the AI responds. The
 small-steps persona is always on underneath; the mode layers a directive on top:
 
 - **learning** (default) — favours your understanding over a finished answer. It
@@ -413,9 +413,8 @@ resuming.
 Ask AI doesn't only *answer* — it can **edit the notebook for you**. Ask it to
 "fix the bug in **cell 3**," "vectorise this loop," or "add a test below," and it
 rewrites the target cell (or inserts a new one) in place; the notebook refreshes
-to show the change. This is the same idea as SolveIt's `dialoghelper`, which
-gives its AI tools to manipulate the dialog — here it runs through the local
-[MCP server](server/mcp_cells.py) exposing `list_cells` / `update_cell` /
+to show the change. It runs through the local
+[MCP server](../server/mcp_cells.py) exposing `list_cells` / `update_cell` /
 `str_replace` / `insert_cell`. The tools are available to the Codex and Claude
 CLI model choices; Codex uses the installed `codex` CLI, while Claude uses your
 **Claude Max subscription** (no API credits) via the `claude` CLI.
@@ -434,17 +433,17 @@ to turn them off (e.g. for the leanest time-to-first-token).
 #### …but the right hands, not a free-roaming agent
 
 Notice what those cell tools have in common: they edit the **shared notebook you
-can see**, and they never *run* code — you still press run yourself. That's the
-SolveIt posture (the human is the agent; the AI is a thinking partner working in
-small steps), and it's deliberate.
+can see**, and they never *run* code — you still press run yourself. That's
+deliberate: the human is the agent; the AI is a thinking partner working in small
+steps.
 
 The catch is that the Max-plan path shells out to `claude -p`, which is the full
 Claude Code **agent** — so out of the box it *also* has Write/Edit/Bash. Left
 alone it does what agents do: writes the whole solution to a scratchpad file and
 executes it off-screen, taking the executor's seat you're supposed to hold and
-steamrolling the small-steps [persona](dandelion/claude_cli.py) we append. So the
+steamrolling the small-steps [persona](../dandelion/claude_cli.py) we append. So the
 dandelion launches it with `--disallowed-tools Write Edit Bash`
-([dandelion/claude_cli.py](dandelion/claude_cli.py)). The line it draws: the AI may
+([dandelion/claude_cli.py](../dandelion/claude_cli.py)). The line it draws: the AI may
 make **visible, in-notebook** edits when asked, but it can't run code or work
 off-screen. This strips only the *spawned assistant's* hands — your own Claude
 Code tools are untouched.
@@ -463,8 +462,8 @@ per target at `~/.config/dandelion/dialogs-<target>.json` (override the
 directory with `DANDELION_DATA`). So your notebook survives a restart, and it
 survives the backend being rebuilt when you save Settings or switch targets.
 Cells, outputs, plots, and pin/mute flags are all restored. (The mock fallback
-used when no server is reachable stays ephemeral; a real **solveit** target keeps
-its dialogs on the SolveIt server.)
+used when no server is reachable stays ephemeral; a **solveit** target keeps
+its dialogs on that server.)
 
 Everything you create stays **local to the machine and out of git**: notebooks,
 papers, the recall schedule, libraries and the blog project all live under that
@@ -493,7 +492,7 @@ folder is moved into the local directory the first time `dandelion serve` runs.
 
 Your dialogs are where you *learn*; a **library** is how you *ship* what you
 worked out — and the two stay separate (see
-[docs/design/graph-vs-tree.md](docs/design/graph-vs-tree.md)). Rather than one
+[docs/design/graph-vs-tree.md](design/graph-vs-tree.md)). Rather than one
 notebook = one package, libraries are **cell-centric**: tag any cell, in any
 dialog, into a library.
 
@@ -564,7 +563,7 @@ card — Dandelion puts the built package on the kernel's path, so `import <pkg>
 just works in any code cell (no `sys.path` boilerplate). That closes the loop:
 build a library from your cells, import it back, use it, and — via the provenance
 links — click straight back to the source cell when you want to change something.
-(Kernel backend only; on a real solveit target you'd install the package yourself.)
+(Kernel backend only; on a solveit target you'd install the package yourself.)
 
 ## Reading papers (and web pages)
 
@@ -627,20 +626,3 @@ Papers are **local, like everything else**: the uploaded PDFs, their converted
 markdown, extracted figures, and the dialog→source index live in
 `~/.config/dandelion/papers` (set `DANDELION_PAPERS` to move it) and are
 included in `just backup`.
-
-## Pain points this targets
-
-- **Switching local ↔ H100** — one dropdown; the tunnel keeps the URL constant.
-- **Setup/environment** — `doctor` tells you *exactly* where a connection breaks
-  (DNS? port? token?) instead of a generic failure.
-- **Clunky UI/UX** — a calm, single-pane chat-style interface over the dialog
-  model (code / ask-AI / note), instead of juggling raw client calls.
-
-## Assumptions (correct me if wrong)
-
-This assumes you run a **SolveIt server** on each box (the laptop and the H100) —
-that's what the localhost:5001 default + dummy-token-for-localhost behavior in
-`solveit_client` implies is possible. If instead you only use hosted
-`solve.it.com` and want the H100 purely as remote *compute attached to* a hosted
-instance, the switcher still applies — we'd just point `h100.url` at the hosted
-instance URL and drop the SSH tunnel.

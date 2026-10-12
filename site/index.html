@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Dandelion</title>
-<meta name="description" content="A local-first notebook where the AI teaches instead of doing the work. It hints, you run the code. Follows Answer.AI's SolveIt method.">
+<meta name="description" content="A local-first notebook where the AI teaches instead of doing the work. It hints, you run the code.">
 <meta name="theme-color" content="#FAF9F5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Dandelion">
 <meta property="og:title" content="Dandelion: a notebook that teaches">
-<meta property="og:description" content="The AI hints. You run the code. A local-first notebook that follows Answer.AI's SolveIt method, with an AI that never runs your cells and, by default, can't write files.">
+<meta property="og:description" content="The AI hints. You run the code. A local-first notebook with an AI that never runs your cells and, by default, can't write files.">
 <meta property="og:url" content="https://slegroux.github.io/pappus/">
 <meta property="og:image" content="https://slegroux.github.io/pappus/assets/og.png">
 <meta property="og:image:width" content="1200">
@@ -19,7 +19,7 @@
 <meta property="og:image:alt" content="Dandelion logo, a dandelion seed, beside the line: It hints. You run the code.">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Dandelion: a notebook that teaches">
-<meta name="twitter:description" content="The AI hints. You run the code. A local-first notebook that follows Answer.AI's SolveIt method.">
+<meta name="twitter:description" content="The AI hints. You run the code. A local-first notebook where the AI teaches instead of doing the work.">
 <meta name="twitter:image" content="https://slegroux.github.io/pappus/assets/og.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -960,7 +960,7 @@
     <div>
       <p class="eyebrow">A local-first notebook that teaches</p>
       <h1>It hints.<br>You <em>run<br>the code.</em></h1>
-      <p class="lede">Dandelion is a notebook where the AI is a thinking partner, not a ghostwriter. It follows Answer.AI's SolveIt method: small steps, one cell at a time. The AI <strong>never runs your cells</strong>, and by default <strong>it can't write files</strong>. Running the code is your job.</p>
+      <p class="lede">Dandelion is a notebook where the AI is a thinking partner, not a ghostwriter. You work in small steps, one cell at a time. The AI <strong>never runs your cells</strong>, and by default <strong>it can't write files</strong>. Running the code is your job.</p>
       <div class="cta">
         <a class="btn" href="#install">Get started <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
         <a class="quiet" href="https://github.com/slegroux/pappus">
@@ -1250,9 +1250,9 @@
         </div>
       </div>
       <div class="reason">
-        <h3>SolveIt, or its own kernel</h3>
+        <h3>Its own kernel, or a SolveIt server</h3>
         <div>
-          <p>Point it at a SolveIt server, or run the small SolveIt-compatible kernel server that ships with it. That one executes real Python with a persistent namespace per dialog, and refuses to listen beyond loopback without a token.</p>
+          <p>Code runs on the small kernel server that ships with it: real Python with a persistent namespace per dialog, which refuses to listen beyond loopback without a token. It can also connect to a SolveIt server through Answer.AI's <code>solveit_client</code>.</p>
         </div>
       </div>
     </div>
@@ -1314,8 +1314,8 @@ just app      <span class="c"># optional: a double-click launcher for macOS</spa
     <div>
       <p class="eyebrow" style="margin-bottom: 14px">Where it comes from</p>
       <h2>Standing on a good method</h2>
-      <p>Dandelion follows the method behind Answer.AI's <a href="https://solve.it.com">SolveIt</a>: work in small steps, keep the human in the driver's seat, and let the AI be a thinking partner. It can connect to a SolveIt server or run on its own. It is an independent project, not affiliated with or endorsed by Answer.AI.</p>
-      <p>The name has two halves. In Pólya's <cite>How to Solve It</cite>, "Dandelion" is the entry on working backwards from the unknown. And a dandelion is the little parachute on a dandelion seed, the thing that carries it forward.</p>
+      <p>Dandelion is built on an old idea about learning: work in small steps, keep the human in the driver's seat, and let the AI be a thinking partner. It runs on its own kernel, and can also connect to a <a href="https://solve.it.com">SolveIt</a> server through Answer.AI's <code>solveit_client</code>. It is an independent project, not affiliated with or endorsed by Answer.AI.</p>
+      <p>The name: blow on a dandelion and the seed head comes apart, each seed carried off on its own little parachute to wherever it takes root. Ideas travel the same way. You're the one who plants them.</p>
       <p>Made by Sylvain Le Groux at <a href="https://slegroux.github.io/sisyphe/">Sisyphe</a>.</p>
     </div>
   </div>
