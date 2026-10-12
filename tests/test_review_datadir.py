@@ -350,14 +350,21 @@ def test_adopt_refuses_while_an_old_server_runs_there(tmp_path, monkeypatch):
     assert datadir.adopt_legacy_root(home=tmp_path) == tmp_path / ".config" / "dandelion"
 
 
-def test_cli_prints_the_old_server_notice_and_keeps_going(tmp_path, monkeypatch, capsys):
+def test_serve_refuses_while_an_old_server_runs(tmp_path, monkeypatch, capsys):
+    # Starting anyway would create an empty ~/.config/dandelion, and the next
+    # start would then refuse to move the old folder (both roots hold data).
     monkeypatch.delenv("DANDELION_DATA", raising=False)
+    monkeypatch.setenv("DANDELION_HOST", "127.0.0.1")
     old = _old_root(tmp_path / "home")
     (old / ".serve.pid").write_text(str(os.getppid()))
     monkeypatch.setattr(datadir, "migrate_repo_data", lambda old=None: [])
     monkeypatch.setattr(datadir, "leftovers", lambda old=None: [])
-    cli._move_out_of_repo()
+    assert cli._move_out_of_repo() is False
     assert "An older Pappus server" in capsys.readouterr().err
+    with pytest.raises(SystemExit, match="stop the older server"):
+        cli.cmd_serve(None)
+    assert not (tmp_path / "home" / ".config" / "dandelion").exists()
+    assert not old.is_symlink()
     assert cli.main(["restore", str(tmp_path / "x.tar.gz")]) == 1   # would restore beside it
     assert cli.main(["backup", str(tmp_path)]) == 1                 # would back up nothing
 

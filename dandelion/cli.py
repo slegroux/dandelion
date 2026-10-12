@@ -124,13 +124,17 @@ def _adopt_legacy_root():
     return True
 
 
-def _move_out_of_repo():
+def _move_out_of_repo() -> bool:
     """User data used to live in <repo>/data (pushed to GitHub by `just sync`).
     Ignore a stale data env var still pointing there, adopt an old ~/.config
-    root, and move what's in <repo>/data into the local data root once."""
+    root, and move what's in <repo>/data into the local data root once.
+    Returns False, having changed nothing, while an older server still runs on
+    the old folder: starting now would create an empty ~/.config/dandelion and
+    strand the notebooks in the old one."""
     from . import datadir
     _ignore_repo_data_env()
-    _adopt_legacy_root()
+    if not _adopt_legacy_root():
+        return False
     try:
         datadir.rekey_papers()     # idempotent: finishes a re-key a crash cut short
     except Exception as e:  # noqa: BLE001 — a missed re-key only costs a re-conversion
@@ -140,7 +144,7 @@ def _move_out_of_repo():
     except Exception as e:  # noqa: BLE001 — a failed migration must never block serve
         print(f"warning: could not move {datadir.REPO_DATA} to {datadir.data_root()}: {e}",
               file=sys.stderr)
-        return
+        return True
     if moved:
         print(f"Moved {len(moved)} entries from {datadir.REPO_DATA} to {datadir.data_root()}")
     left = datadir.leftovers()
@@ -148,6 +152,7 @@ def _move_out_of_repo():
         print(f"warning: {len(left)} files in {datadir.REPO_DATA} were not moved because "
               f"{datadir.data_root()} already has them: {', '.join(left[:5])}"
               f"{' …' if len(left) > 5 else ''}", file=sys.stderr)
+    return True
 
 
 def cmd_backup(args):
@@ -213,7 +218,8 @@ def cmd_serve(_):
             f"refusing to bind {host}: the UI has no authentication, so this would "
             "expose unauthenticated code execution and your stored API keys. "
             "Use an SSH tunnel for remote access (see the comment in cli.py).")
-    _move_out_of_repo()
+    if not _move_out_of_repo():
+        raise SystemExit("not starting: stop the older server first (see above)")
     from .datadir import mark_serving
     mark_serving()
     if reload:
