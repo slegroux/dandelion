@@ -19,6 +19,8 @@ README_files/
 
 # generated, machine-specific (built by `just app`)
 Dandelion.app/
+# pre-rename launcher; rebuild with `just app`
+Pappus.app/
 .DS_Store
 
 # User data never lives in the repo: notebooks, papers, recall, libraries and

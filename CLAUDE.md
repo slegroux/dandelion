@@ -28,7 +28,7 @@ uv run python -m dandelion.cli serve   # UI only (assumes kernel already up)
 
 The kernel server needs the coding stack: `uv run --extra kernel python -m
 server.kernel_server --port 5055`. Without `--extra kernel` it won't start and the
-UI silently falls back to the in-memory mock (grey LED, no code execution).
+UI silently falls back to the in-memory mock (amber LED, no code execution).
 
 Live tests skip unless `SOLVEIT_LIVE_URL` is set, so the suite runs offline with no
 server, subprocess, or network. Test files are named `test_review_*.py` by the

@@ -182,4 +182,5 @@ just dev      # kernel + UI in the foreground; Ctrl+C stops both
 > **Renamed from Pappus** (and before that, SolveIt Sidekick). On first start,
 > Dandelion moves your data from `~/.config/pappus` to `~/.config/dandelion` and
 > leaves a link at the old path; converted papers keep their cache. `PAPPUS_*` and
-> `SIDEKICK_*` settings still work as their `DANDELION_*` equivalents.
+> `SIDEKICK_*` settings still work as their `DANDELION_*` equivalents. Notebook code
+> that imported `pappus.*` modules now imports `dandelion.*`.

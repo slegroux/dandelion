@@ -55,7 +55,7 @@ uv run --extra kernel python -m server.kernel_server --port 5055
 ```
 
 Without the `kernel` extra, the UI can fall back to the in-memory mock
-(grey LED, no real code execution).
+(amber LED, no real code execution).
 
 Live tests skip unless `SOLVEIT_LIVE_URL` is set, so the normal suite should run
 offline with no live SolveIt server, subprocess, or network. Test files named

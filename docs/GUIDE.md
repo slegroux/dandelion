@@ -47,7 +47,7 @@ profile in `targets.yaml`.
 | `dandelion/doctor.py`  | Diagnose connection/setup (DNS, port, token, `/test_route`) |
 | `dandelion/client.py`  | One `connect()` over the bundled kernel, `solveit_client`, and an in-memory mock |
 | `dandelion/app.py`     | The web UI (FastHTML), styled like the Claude desktop app |
-| `dandelion/cli.py`     | `dandelion targets / doctor / up / serve` |
+| `dandelion/cli.py`     | `python -m dandelion.cli targets / doctor / up / serve` |
 
 The mock fallback means the UI runs **with no server at all** — handy for
 trying the interface or developing it away from the H100. When a real target is
@@ -152,7 +152,7 @@ as soon as you add a key in Settings — no extra flag needed.
 
 The bundled `kernel` target (`backend: kernel` in `targets.yaml`) runs real Python
 in a persistent per-dialog namespace — variables carry across cells, just like a
-notebook. On the **H100**, run the same server there and `dandelion up h100`
+notebook. On the **H100**, run the same server there and `uv run python -m dandelion.cli up h100`
 tunnels it back.
 
 > **Security.** `/exec` runs arbitrary code, so the kernel server is secure by
@@ -160,7 +160,7 @@ tunnels it back.
 > non-loopback host without `--token`** (or `DANDELION_KERNEL_TOKEN`), after which
 > every request must carry a matching `_solveit` cookie. The H100 flow keeps it on
 > `127.0.0.1` and reaches it through the SSH tunnel, so no token is needed; only
-> pass `--token` if you expose the port directly. Likewise, `dandelion serve` binds
+> pass `--token` if you expose the port directly. Likewise, the UI server binds
 > `127.0.0.1` by default — set `DANDELION_HOST=0.0.0.0` to expose the UI on your LAN.
 
 ### Connecting to a SolveIt server
@@ -441,8 +441,8 @@ The catch is that the Max-plan path shells out to `claude -p`, which is the full
 Claude Code **agent** — so out of the box it *also* has Write/Edit/Bash. Left
 alone it does what agents do: writes the whole solution to a scratchpad file and
 executes it off-screen, taking the executor's seat you're supposed to hold and
-steamrolling the small-steps [persona](../dandelion/claude_cli.py) we append. So the
-dandelion launches it with `--disallowed-tools Write Edit Bash`
+steamrolling the small-steps [persona](../dandelion/claude_cli.py) we append. So
+Dandelion launches it with `--disallowed-tools Write Edit Bash`
 ([dandelion/claude_cli.py](../dandelion/claude_cli.py)). The line it draws: the AI may
 make **visible, in-notebook** edits when asked, but it can't run code or work
 off-screen. This strips only the *spawned assistant's* hands — your own Claude
@@ -486,7 +486,14 @@ damaged file aside as `….corrupt-<time>`, reopens the newest good copy, and sa
 so in a banner instead of starting empty. Which
 cells are collapsed and the table-of-contents state are per browser and are not
 part of a backup. An older checkout that kept dialogs in the repo's `data/`
-folder is moved into the local directory the first time `dandelion serve` runs.
+folder is moved into the local directory the first time the UI server starts.
+
+**Coming from Pappus or SolveIt Sidekick?** The first start moves `~/.config/pappus`
+(or `~/.config/solveit-sidekick`) to `~/.config/dandelion` and leaves a link at the
+old path; converted papers keep their cache. If an older server is still running,
+it leaves your data where it is and says so: stop it with `just stop`, then start
+again. Notebook code that imported
+`pappus.*` modules (e.g. `from pappus.audio import play`) now imports `dandelion.*`.
 
 ## Building a Python library from your dialogs
 
