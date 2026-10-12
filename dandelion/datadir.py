@@ -17,11 +17,12 @@ install (`dandelion backup` / `dandelion restore`). API keys are left out of a
 backup unless asked for, so an archive can be copied around safely.
 
 `migrate_repo_data()` moves an old in-repo store (`<repo>/data`, which the
-justfile used to point DANDELION_DATA at and `just sync` pushed to GitHub) into
+justfile used to point PAPPUS_DATA at and `just sync` pushed to GitHub) into
 the local home once, never overwriting anything already there.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import tarfile
@@ -45,32 +46,134 @@ def data_root() -> Path:
 LEGACY_ROOT_NAMES = ("pappus", "solveit-" + "sidekick")
 
 
+class MigrationNotice(Exception):
+    """adopt_legacy_root left something for the user to sort out; the message
+    says what. The CLI prints it and carries on."""
+
+
+class LegacyAppRunning(MigrationNotice):
+    def __init__(self, pid: int, old: Path):
+        self.pid = pid
+        super().__init__(f"An older Pappus server (pid {pid}) is still running; stop it "
+                         "(just stop) and start again to move your data to "
+                         f"~/.config/dandelion. If it isn't running, delete {old / '.serve.pid'}")
+
+
+def _legacy_roots(cfg: Path) -> list[Path]:
+    """Every spelling of the old roots a path or cache key may carry: under the
+    literal ~/.config and under the resolved one (cache keys hash resolved paths)."""
+    return list(dict.fromkeys(base / n for base in (cfg, cfg.resolve())
+                              for n in LEGACY_ROOT_NAMES))
+
+
+def legacy_file(name: str) -> Path | None:
+    """`name` (secrets.json, tools.json) under the newest old root that has it.
+    Lets keys and tool policy follow where the data move didn't run (an explicit
+    data dir, a kernel-only machine)."""
+    cfg = Path.home() / ".config"
+    return next((cfg / n / name for n in LEGACY_ROOT_NAMES if (cfg / n / name).is_file()), None)
+
+
+def _explicit_elsewhere(cfg: Path) -> bool:
+    """DANDELION_DATA (PAPPUS_/SIDEKICK_DATA arrive aliased to it) names a dir
+    other than the new or an old default root: the user chose it, leave it be."""
+    env = os.environ.get("DANDELION_DATA")
+    if not env:
+        return False
+    p = Path(env).expanduser()
+    defaults = [*_legacy_roots(cfg), cfg / "dandelion", cfg.resolve() / "dandelion"]
+    return not any(p == d or _same(p, d) for d in defaults)
+
+
+def _is_rename_link(link: Path, cfg: Path) -> bool:
+    """A link an earlier rename left (to another old root or the new one), as
+    opposed to one the user made (into pCloud, onto an external drive…)."""
+    t = Path(os.readlink(link))
+    t = t if t.is_absolute() else cfg / t
+    return t.name in (*LEGACY_ROOT_NAMES, "dandelion") and _same(t.parent, cfg)
+
+
 def adopt_legacy_root(home: Path | None = None) -> Path | None:
     """First start after a rename: move ~/.config/<old name> to ~/.config/dandelion
     and leave a symlink at the old path, so old scripts and backups still find
     the data. The newest old root that is a real directory moves (an older one is
-    normally already a link to it). Runs only when DANDELION_DATA is unset and the
-    new root does not exist yet; never overwrites. Converted papers are re-keyed
-    to their new paths. Called once at serve time (cli), never from data_root(),
-    so a path lookup can't move data. Returns the new root when it moved something."""
-    if os.environ.get("DANDELION_DATA"):
-        return None
+    normally a link an earlier rename left). If it is instead a link the user
+    made, ~/.config/dandelion becomes a link to the same place and nothing moves.
+    Skipped when DANDELION_DATA names a dir other than a default root; never
+    overwrites. Converted papers are re-keyed to their new paths. Called by the
+    CLI, never from data_root(), so a path lookup can't move data. Returns the
+    new root when it moved or linked something. Raises MigrationNotice when it
+    left something for the user: an old server still running, data in both
+    roots, or a link it could not make."""
     cfg = (home or Path.home()) / ".config"
+    if _explicit_elsewhere(cfg):
+        return None
     new = cfg / "dandelion"
+    olds = [cfg / n for n in LEGACY_ROOT_NAMES]
     if new.exists() or new.is_symlink():
+        for old in olds:
+            if old.is_dir() and not old.is_symlink() and not _same(old, new) \
+                    and any(old.iterdir()):
+                raise MigrationNotice(f"both {old} and {new} hold data; using {new}. "
+                                      f"Nothing was moved: copy what you need from {old}, "
+                                      "then remove it")
         return None
-    old = next((cfg / n for n in LEGACY_ROOT_NAMES
-                if (cfg / n).is_dir() and not (cfg / n).is_symlink()), None)
-    if old is None:
+    for old in olds:
+        if old.is_symlink():
+            if _is_rename_link(old, cfg):
+                continue
+            new.symlink_to(os.readlink(old), target_is_directory=True)
+            return new
+        if old.is_dir():
+            break
+    else:
         return None
+    pid = running_server_pid(old)
+    if pid:
+        raise LegacyAppRunning(pid, old)
     old_real = old.resolve()
     old.rename(new)
-    old.symlink_to(new, target_is_directory=True)
     try:
-        _rekey_moved_papers(new, [old_real, *(cfg / n for n in LEGACY_ROOT_NAMES)])
-    except OSError:  # the move is done; a paper that misses its cache just re-converts
-        pass
+        old.symlink_to(new, target_is_directory=True)
+        link_error = None
+    except OSError as e:
+        link_error = e
+    # the move is done; a paper that misses its cache just re-converts, and the
+    # CLI re-runs the re-key (rekey_papers) on every start
+    with contextlib.suppress(Exception):
+        _rekey_moved_papers(new, [old_real, *_legacy_roots(cfg)])
+    if link_error:
+        raise MigrationNotice(f"moved {old} to {new}, but could not leave a link at "
+                              f"{old}: {link_error}")
     return new
+
+
+def rekey_papers(home: Path | None = None) -> int:
+    """Re-key the current root's papers against every old root. Cheap and
+    idempotent, so the CLI runs it on every start: it finishes a move whose
+    re-keying was cut short."""
+    return _rekey_moved_papers(data_root(), _legacy_roots((home or Path.home()) / ".config"))
+
+
+def _rewrite_sources(src: Path, repoint) -> bool:
+    """Apply `repoint(source) -> new source or None` to each dialog's entry in a
+    papers sources.json, written atomically. Returns whether anything changed."""
+    import json
+
+    from .paper import _read_json_dict
+    recs = _read_json_dict(src)
+    changed = False
+    for dialog, rec in (recs or {}).items():
+        path = rec.get("source") if isinstance(rec, dict) else None
+        new = repoint(path) if isinstance(path, str) and path else None
+        if new and new != path:
+            recs[dialog] = {**rec, "source": new}
+            changed = True
+    if changed:
+        tmp = src.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(recs, indent=1))
+        tmp.replace(src)
+    return changed
 
 
 def _rekey_moved_papers(root: Path, old_roots: list[Path]) -> int:
@@ -78,48 +181,55 @@ def _rekey_moved_papers(root: Path, old_roots: list[Path]) -> int:
     its new path-based key (paper._md_key hashes the absolute path), so papers
     reopen without a slow marker re-conversion, and re-point sources.json entries
     that name a file under an old root. Every old root is tried, since a paper
-    converted before an earlier rename still carries that root's key. Never
-    overwrites; returns how many conversions were re-keyed."""
-    import json
-
-    from .paper import _md_key, _path_key, _read_json_dict
-    papers, roots = root / "papers", list(dict.fromkeys(str(r) for r in old_roots))
+    converted before an earlier rename still carries that root's key. The papers
+    dir is DANDELION_PAPERS when that lies under the root, else root/papers.
+    Never overwrites; one unreadable upload skips only itself. Returns how many
+    conversions were re-keyed."""
+    from .paper import _cache_dir, _md_key, _path_key
+    papers, rel = root / "papers", "papers"
+    try:
+        cache = _cache_dir()
+        rel = cache.resolve().relative_to(root.resolve()).as_posix()
+        papers = cache
+    except (OSError, ValueError):                # papers live outside the root
+        pass
+    roots = list(dict.fromkeys(str(r) for r in old_roots))
     up = papers / "uploads"
     n = 0
     for pdf in sorted(up.glob("*.pdf")) if up.is_dir() else []:
-        new_md = papers / f"{_md_key(pdf)}.md"
-        if new_md.exists():
-            continue
-        stamp = pdf.stat().st_mtime_ns
-        for r in roots:
-            old_md = papers / f"{_path_key(f'{r}/papers/uploads/{pdf.name}', stamp)}.md"
-            if old_md.is_file():
-                shutil.copy2(old_md, new_md)
-                n += 1
-                break
-    src = papers / "sources.json"
-    recs = _read_json_dict(src)
-    if recs:
-        changed = False
-        for dialog, rec in recs.items():
-            path = str(rec.get("source", "")) if isinstance(rec, dict) else ""
+        try:
+            new_md = papers / f"{_md_key(pdf)}.md"
+            if new_md.exists():
+                continue
+            stamp = pdf.stat().st_mtime_ns
             for r in roots:
-                if path.startswith(r + os.sep):
-                    recs[dialog] = {**rec, "source": str(root / path[len(r) + 1:])}
-                    changed = True
+                old_md = papers / f"{_path_key(f'{r}/{rel}/uploads/{pdf.name}', stamp)}.md"
+                if old_md.is_file():
+                    shutil.copy2(old_md, new_md)
+                    n += 1
                     break
-        if changed:
-            tmp = src.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(recs, indent=1))
-            tmp.replace(src)
+        except OSError:                          # dangling or unreadable upload
+            continue
+
+    def repoint(path: str) -> str | None:
+        for r in roots:
+            if path.startswith(r + os.sep):
+                moved = root / path[len(r) + 1:]
+                return str(moved) if moved.exists() else None
+        return None
+    try:
+        _rewrite_sources(papers / "sources.json", repoint)
+    except (OSError, ValueError):
+        pass
     return n
 
 
-def _config_files() -> dict[str, Path]:
-    """Config that lives at its own (env-overridable) path, keyed by archive name."""
+def _config_files(write: bool = False) -> dict[str, Path]:
+    """Config that lives at its own (env-overridable) path, keyed by archive name.
+    `write` gives where it is saved, not a legacy copy it may still be read from."""
     from .secrets_store import secrets_path
     from .tools_config import tools_path
-    return {"config/tools.json": tools_path(), "config/secrets.json": secrets_path()}
+    return {"config/tools.json": tools_path(write), "config/secrets.json": secrets_path(write)}
 
 
 def _same(a: Path, b: Path) -> bool:
@@ -205,10 +315,10 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def running_server_pid() -> int | None:
-    """PID of a live `dandelion serve` using this data root, else None."""
+def running_server_pid(root: Path | None = None) -> int | None:
+    """PID of a live `dandelion serve` using this data root (or `root`), else None."""
     try:
-        pid = int(_pidfile().read_text().strip())
+        pid = int(((root / ".serve.pid") if root else _pidfile()).read_text().strip())
     except (OSError, ValueError):
         return None
     return pid if pid != os.getpid() and _pid_alive(pid) else None
@@ -306,7 +416,7 @@ def _target_for(name: str) -> Path | None:
     pp = PurePosixPath(name)
     if pp.is_absolute() or ".." in pp.parts or len(pp.parts) < 2:
         return None
-    cfg = _config_files()
+    cfg = _config_files(write=True)
     if name in cfg:
         return cfg[name]
     if pp.parts[0] != "data":
@@ -331,7 +441,7 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
         # edit, so restoring under it would be silently undone
         raise AppRunning(f"the app is running (pid {pid}); stop it first (just stop). "
                          f"If it isn't, delete {_pidfile()}")
-    secret = secrets_path()
+    secret = secrets_path(write=True)
     restored, skipped, index = [], [], {}
     with tarfile.open(Path(archive).expanduser(), "r:gz") as tar:
         for m in tar.getmembers():
@@ -379,4 +489,18 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
         new_md = cache / f"{_md_key(pdf)}.md"
         if not new_md.exists():
             shutil.copy2(md, new_md)
+    # re-point "reopen paper" links that name an upload under the archive's
+    # original root (another machine, a pre-rename ~/.config/pappus) to this one
+    up = cache / "uploads"
+
+    def repoint(path: str) -> str | None:
+        p = Path(path)
+        if p.is_absolute() and p.parent.name == "uploads" and not p.exists() \
+                and (up / p.name).is_file():
+            return str(up / p.name)
+        return None
+    try:
+        _rewrite_sources(cache / "sources.json", repoint)
+    except (OSError, ValueError):
+        pass
     return restored, skipped

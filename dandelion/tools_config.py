@@ -28,11 +28,17 @@ DEFAULT_ALLOW = ["WebSearch", "WebFetch"]
 DEFAULT_DENY = ["Write", "Edit", "Bash"]
 
 
-def tools_path() -> Path:
+def tools_path(write: bool = False) -> Path:
+    """Where the policy is saved. For reading (`write` False), a copy left under
+    an old data root (~/.config/pappus, …) stands in until the first save."""
     env = os.environ.get("DANDELION_TOOLS")
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".config" / "dandelion" / "tools.json"
+    p = Path.home() / ".config" / "dandelion" / "tools.json"
+    if write or p.exists():
+        return p
+    from .datadir import legacy_file
+    return legacy_file("tools.json") or p
 
 
 def _read() -> dict:
@@ -72,7 +78,7 @@ def deny_list() -> list[str]:
 
 
 def save(allow: list[str], deny: list[str]) -> None:
-    p = tools_path()
+    p = tools_path(write=True)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")

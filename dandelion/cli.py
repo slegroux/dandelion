@@ -80,28 +80,61 @@ def cmd_up(args):
 
 
 def _ignore_repo_data_env():
-    """Old launchers set DANDELION_DATA=<repo>/data; user data no longer lives there."""
+    """Old launchers set PAPPUS_DATA=<repo>/data (SIDEKICK_DATA before that);
+    user data no longer lives there. All three names go: the package aliases the
+    old ones to DANDELION_DATA on import, so a leftover would come back in any
+    child that imports it (uvicorn's reload worker)."""
     from . import datadir
-    cur = os.environ.get("DANDELION_DATA")
-    if cur and datadir._same(datadir.Path(cur).expanduser(), datadir.REPO_DATA):
-        del os.environ["DANDELION_DATA"]
-        print(f"note: ignoring DANDELION_DATA={cur} (inside the repo); "
-              f"using {datadir.data_root()}", file=sys.stderr)
+    names = ("DANDELION_DATA", "PAPPUS_DATA", "SIDEKICK_DATA")
+    stale = {k: v for k in names if (v := os.environ.get(k))
+             and datadir._same(datadir.Path(v).expanduser(), datadir.REPO_DATA)}
+    if not stale:
+        return
+    for k in stale:
+        del os.environ[k]
+    for k in ("PAPPUS_DATA", "SIDEKICK_DATA"):   # what a child's alias would pick
+        if k in os.environ:
+            os.environ.setdefault("DANDELION_DATA", os.environ[k])
+    # name what the user set: DANDELION_DATA only if it isn't just the alias
+    old = [k for k in stale if k != "DANDELION_DATA"]
+    if "DANDELION_DATA" in stale and stale["DANDELION_DATA"] not in (stale[k] for k in old):
+        old.insert(0, "DANDELION_DATA")
+    print(f"note: ignoring {', '.join(f'{k}={stale[k]}' for k in old)} (inside the repo); "
+          f"using {datadir.data_root()}", file=sys.stderr)
+
+
+def _adopt_legacy_root():
+    """Move ~/.config/pappus (or solveit-sidekick) to ~/.config/dandelion once,
+    and say what happened. Never raises; returns False only when an older
+    server still runs on the old folder, so backup/restore would miss the data."""
+    from . import datadir
+    try:
+        adopted = datadir.adopt_legacy_root()
+    except datadir.MigrationNotice as e:
+        print(f"warning: {e}", file=sys.stderr)
+        return not isinstance(e, datadir.LegacyAppRunning)
+    except Exception as e:  # noqa: BLE001 — a failed move must never block serve
+        print(f"warning: could not move the old data folder to ~/.config/dandelion: {e}",
+              file=sys.stderr)
+        return True
+    if adopted and adopted.is_symlink():
+        print(f"Linked {adopted} to {os.readlink(adopted)}, where your old data folder points")
+    elif adopted:
+        print(f"Moved your data to {adopted} (the old folder now links there)")
+    return True
 
 
 def _move_out_of_repo():
     """User data used to live in <repo>/data (pushed to GitHub by `just sync`).
-    Ignore a stale DANDELION_DATA still pointing there, and move what's there
-    into the local data root once."""
+    Ignore a stale data env var still pointing there, adopt an old ~/.config
+    root, and move what's in <repo>/data into the local data root once."""
     from . import datadir
     _ignore_repo_data_env()
+    _adopt_legacy_root()
     try:
-        adopted = datadir.adopt_legacy_root()
-        if adopted:
-            print(f"Moved your data to {adopted} (the old folder now links there)")
-    except OSError as e:  # a failed rename must never block serve
-        print(f"warning: could not move the old data folder to ~/.config/dandelion: {e}",
-              file=sys.stderr)
+        datadir.rekey_papers()     # idempotent: finishes a re-key a crash cut short
+    except Exception as e:  # noqa: BLE001 — a missed re-key only costs a re-conversion
+        print(f"warning: could not re-key converted papers: {e}", file=sys.stderr)
     try:
         moved = datadir.migrate_repo_data()
     except Exception as e:  # noqa: BLE001 — a failed migration must never block serve
@@ -121,6 +154,9 @@ def cmd_backup(args):
     """`dandelion backup [path] [--with-secrets]` — one portable .tar.gz."""
     from . import datadir
     _ignore_repo_data_env()
+    if not _adopt_legacy_root():
+        print("backup refused: stop the older server first (see above)", file=sys.stderr)
+        return 1
     with_secrets = "--with-secrets" in args
     rest = [a for a in args if a != "--with-secrets"]
     dest, n = datadir.backup(rest[0] if rest else None, with_secrets=with_secrets)
@@ -134,6 +170,9 @@ def cmd_restore(args):
     """`dandelion restore <archive> [--force]` — unpack a backup here."""
     from . import datadir
     _ignore_repo_data_env()
+    if not _adopt_legacy_root():
+        print("restore refused: stop the older server first (see above)", file=sys.stderr)
+        return 1
     force = "--force" in args
     rest = [a for a in args if a != "--force"]
     if not rest:

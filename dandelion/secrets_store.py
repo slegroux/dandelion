@@ -28,11 +28,17 @@ PROVIDERS: dict[str, tuple[str, str]] = {
 SETTINGS_PROVIDERS = {k: PROVIDERS[k] for k in ("claude", "glm")}
 
 
-def secrets_path() -> Path:
+def secrets_path(write: bool = False) -> Path:
+    """Where keys are saved. For reading (`write` False), a copy left under an old
+    data root (~/.config/pappus, …) stands in until the first save writes here."""
     env = os.environ.get("DANDELION_SECRETS")
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".config" / "dandelion" / "secrets.json"
+    p = Path.home() / ".config" / "dandelion" / "secrets.json"
+    if write or p.exists():
+        return p
+    from .datadir import legacy_file
+    return legacy_file("secrets.json") or p
 
 
 def load() -> dict:
@@ -47,7 +53,7 @@ def load() -> dict:
 
 def save(provider_env: str, key: str) -> None:
     """Persist one key by its env-var name (e.g. ANTHROPIC_API_KEY)."""
-    p = secrets_path()
+    p = secrets_path(write=True)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = load()
     key = (key or "").strip()

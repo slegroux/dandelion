@@ -7,7 +7,10 @@ Writes `dialogs-kernel.json` (the format HttpKernelBackend persists) under
 <dir>/data, plus <dir>/targets.yaml pointing the `kernel` target at the scratch
 kernel. Notes and Ask-AI answers are pre-written (no AI call is made); code cells
 are really executed on the kernel so their output and matplotlib figure are real.
-Nothing outside <dir> is touched. Then run the UI with:
+Nothing outside <dir> is touched, and an existing dialogs-kernel.json there is
+replaced only if this script wrote it (or with --force). Run it from a checkout
+without a data/ folder: `serve` moves an old <repo>/data into DANDELION_DATA.
+Then run the UI with:
 
     DANDELION_DATA=<dir>/data DANDELION_PAPERS=<dir>/papers DANDELION_SECRETS=<dir>/secrets.json \
     DANDELION_TOOLS=<dir>/tools.json DANDELION_CONFIG=<dir>/targets.yaml \
@@ -111,11 +114,17 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dir", type=Path, help="scratch directory (created if missing)")
     ap.add_argument("--kernel-url", default="http://localhost:5155")
+    ap.add_argument("--force", action="store_true",
+                    help="replace a dialogs-kernel.json this script didn't write")
     a = ap.parse_args()
     root = a.dir.resolve()
-    if str(root).startswith(str(Path.home() / ".config")):
+    home_cfg = (Path.home() / ".config").resolve()
+    if root == home_cfg or home_cfg in root.parents:
         sys.exit("refusing to write under ~/.config")
     data = root / "data"
+    store, marker = data / "dialogs-kernel.json", data / ".demo-data"
+    if store.exists() and not marker.exists() and not a.force:
+        sys.exit(f"refusing to replace {store}: this script didn't write it (--force to anyway)")
     data.mkdir(parents=True, exist_ok=True)
     (root / "papers").mkdir(exist_ok=True)
     os.environ["DANDELION_DATA"] = str(data)       # before importing dandelion
@@ -130,7 +139,8 @@ def main() -> int:
     from dandelion.client import HttpKernelBackend
     from dandelion.targets import Target
 
-    (data / "dialogs-kernel.json").unlink(missing_ok=True)
+    store.unlink(missing_ok=True)
+    marker.write_text("written by scripts/demo_data.py\n")
     be = HttpKernelBackend(Target(name="kernel", url=a.kernel_url, token="dummy", backend="kernel"))
     for dialog, cells in DIALOGS:
         if dialog == "fourier/square-wave":
@@ -143,7 +153,7 @@ def main() -> int:
             elif run:
                 be.exec(dialog, m.id)                        # really executed on the kernel
                 print(f"ran {dialog}: {m.output.strip()[:60]!r} rich={len(m.rich)}")
-    print(f"wrote {data / 'dialogs-kernel.json'} and {root / 'targets.yaml'}")
+    print(f"wrote {store} and {root / 'targets.yaml'}")
     return 0
 
 

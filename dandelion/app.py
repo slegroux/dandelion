@@ -2568,6 +2568,13 @@ _LOCAL_HDRS = (
     Meta(name="viewport", content="width=device-width, initial-scale=1, viewport-fit=cover"),
     Link(rel="icon", href="/static/img/favicon.svg", type="image/svg+xml"),
     Style(_PYG_RUN_CSS),                         # runnable-cell token colours, light + dark
+    # Layout state (panels, column widths, folded sections) was kept under
+    # pappus_* keys before the rename: copy each to its dandelion_* name once,
+    # before any script reads it. The old keys stay for an older checkout.
+    Script("try{var ks=[];for(var i=0;i<localStorage.length;i++)ks.push(localStorage.key(i));"
+           "ks.forEach(function(k){if(k&&k.indexOf('pappus_')===0){var n='dandelion_'+k.slice(7);"
+           "if(localStorage.getItem(n)===null)localStorage.setItem(n,localStorage.getItem(k));}});"
+           "}catch(e){}"),
     Script(src="/vendor/htmx.min.js"),
     Script(src="/vendor/fasthtml.js"),
     Script(src="/vendor/surreal.js"),

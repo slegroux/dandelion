@@ -111,8 +111,9 @@ def migrate_legacy_cache(old: Path | None = None) -> list[str]:
         news = _read_json_dict(nsrc)
         if news is None:                         # unreadable destination: leave it
             return moved                         # and the old index untouched
-        # sources were recorded under whatever DANDELION_DATA said, possibly via a
-        # symlink, so match both the literal and the resolved old location.
+        # sources were recorded under whatever PAPPUS_DATA (now DANDELION_DATA)
+        # said, possibly via a symlink, so match both the literal and the
+        # resolved old location.
         prefixes = {str(old), str(old.resolve())}
         for dialog, rec in (olds or {}).items():
             if dialog in news or not isinstance(rec, dict):
