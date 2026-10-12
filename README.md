@@ -6,17 +6,17 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/slegroux/pappus/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/slegroux/pappus/ci.yml?branch=main&label=CI"></a>
+  <a href="https://github.com/slegroux/dandelion/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/slegroux/dandelion/ci.yml?branch=main&label=CI"></a>
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB">
   <img alt="Built with FastHTML" src="https://img.shields.io/badge/built%20with-FastHTML-1F1F22">
   <img alt="Ask AI: Claude, Codex, GLM" src="https://img.shields.io/badge/Ask%20AI-Claude%20%C2%B7%20Codex%20%C2%B7%20GLM-256ABF">
   <img alt="Local-first, no CDN" src="https://img.shields.io/badge/local--first-no%20CDN-1A8633">
-  <a href="https://slegroux.github.io/pappus/"><img alt="Landing page" src="https://img.shields.io/badge/site-slegroux.github.io%2Fpappus-256ABF"></a>
+  <a href="https://slegroux.github.io/dandelion/"><img alt="Landing page" src="https://img.shields.io/badge/site-slegroux.github.io%2Fdandelion-256ABF"></a>
   <a href="https://slegroux.github.io/sisyphe/"><img alt="Made by Sisyphe" src="https://img.shields.io/badge/made%20by-Sisyphe-D9432B"></a>
 </p>
 
 <p align="center">
-  <a href="https://slegroux.github.io/pappus/">Landing page</a> ·
+  <a href="https://slegroux.github.io/dandelion/">Landing page</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#a-first-dialog">A first dialog</a> ·
   <a href="docs/GUIDE.md">Guide</a> ·
@@ -60,7 +60,7 @@ You need [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 (`brew install uv just`).
 
 ```bash
-git clone https://github.com/slegroux/pappus.git dandelion && cd dandelion
+git clone https://github.com/slegroux/dandelion.git && cd dandelion
 uv sync --extra kernel --extra paper --extra web   # the app, the kernel's numpy/torch stack, PDF + web readers
 just start                                         # kernel on :5055, UI on http://localhost:8000
 ```
@@ -177,7 +177,7 @@ just dev      # kernel + UI in the foreground; Ctrl+C stops both
 | `dandelion/client.py` | One `connect()` over the bundled kernel, `solveit_client` and an in-memory mock |
 | `server/kernel_server.py` | The kernel server: execution, rich output, completion |
 | `dandelion/claude_cli.py`, `codex_cli.py` | Ask AI over your Claude or ChatGPT subscription |
-| `site/` | The [landing page](https://slegroux.github.io/pappus/) |
+| `site/` | The [landing page](https://slegroux.github.io/dandelion/) |
 
 > **Renamed from Pappus** (and before that, SolveIt Sidekick). On first start,
 > Dandelion moves your data from `~/.config/pappus` to `~/.config/dandelion` and
