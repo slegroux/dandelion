@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-# Make `import pappus` / `import server` work for any test file run alone
+# Make `import dandelion` / `import server` work for any test file run alone
 # (uv runs the project unpackaged, `package = false`).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -11,15 +11,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 @pytest.fixture(autouse=True)
 def _isolated_user_data(tmp_path, monkeypatch):
     """Real notebooks, papers, keys and tool config live in
-    ~/.config/pappus. Point every test at its own tmp_path so none can
+    ~/.config/dandelion. Point every test at its own tmp_path so none can
     read or clobber them. Tests may still override any of these themselves."""
-    # A throwaway HOME too: startup code that deliberately ignores PAPPUS_DATA
+    # A throwaway HOME too: startup code that deliberately ignores DANDELION_DATA
     # (e.g. the one-time ~/.config migration) must never reach the real home.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    monkeypatch.setenv("PAPPUS_PAPERS", str(tmp_path / "papers"))
-    monkeypatch.setenv("PAPPUS_SECRETS", str(tmp_path / "secrets.json"))
-    monkeypatch.setenv("PAPPUS_TOOLS", str(tmp_path / "tools.json"))
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    monkeypatch.setenv("DANDELION_PAPERS", str(tmp_path / "papers"))
+    monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "secrets.json"))
+    monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "tools.json"))
 
 
 def pytest_configure(config):
@@ -31,8 +31,8 @@ def pytest_configure(config):
 def _no_real_cli_probes(request, monkeypatch):
     """Settings probes `claude` / `codex`; no test may launch the real binaries.
     Tests of the probes themselves opt out with @pytest.mark.real_auth_probes."""
-    from pappus import claude_cli, codex_cli
-    app = sys.modules.get("pappus.app")
+    from dandelion import claude_cli, codex_cli
+    app = sys.modules.get("dandelion.app")
     if app is not None:
         app._clear_auth_cache()                  # cached probes must not leak between tests
     if request.node.get_closest_marker("real_auth_probes"):

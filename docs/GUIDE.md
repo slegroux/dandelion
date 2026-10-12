@@ -1,0 +1,635 @@
+# Dandelion guide
+
+The full reference: setup, every feature, and how the pieces fit. For the short
+version, see the [README](../README.md).
+
+- [The core idea](#the-core-idea)
+- [What's here](#whats-here)
+- [Quick start](#quick-start)
+- [Setup](#setup)
+- [The bundled kernel server](#the-bundled-kernel-server)
+  - [Run it like a Mac app](#run-it-like-a-mac-app)
+  - [Connecting to a SolveIt server](#connecting-to-a-solveit-server)
+- [Two dependency groups: the server vs your coding stack](#two-dependency-groups-the-server-vs-your-coding-stack)
+- [Models & API keys](#models--api-keys)
+  - [Which tools the AI may use](#which-tools-the-ai-may-use)
+- [Use it](#use-it)
+  - [Editable cells](#editable-cells)
+- [Your work is saved](#your-work-is-saved)
+- [Building a Python library from your dialogs](#building-a-python-library-from-your-dialogs)
+  - [Step by step](#step-by-step)
+  - [How it works](#how-it-works)
+- [Reading papers (and web pages)](#reading-papers-and-web-pages)
+  - [Or step through it, the way Jeremy Howard does](#or-step-through-it-the-way-jeremy-howard-does)
+
+## The core idea
+
+A **target** is just the server URL the client points at, so "laptop vs H100" is
+a dropdown, not a different setup:
+
+```
+┌──────────────┐      kernel → http://localhost:5055                 (laptop)
+│ Dandelion UI │ ───► h100   → http://localhost:5101 ⇢ SSH ⇢ H100:5001
+└──────────────┘      (the H100's port is tunnelled to localhost,
+                       so it never touches the public internet)
+```
+
+Same UI, same client code, every target. The only difference is the active
+profile in `targets.yaml`.
+
+## What's here
+
+| File | Purpose |
+|------|---------|
+| `targets.yaml`        | Define the `kernel`, `local` and `h100` targets (URL, token, SSH) |
+| `dandelion/targets.py` | Load/resolve profiles (token from env, graceful if unset) |
+| `dandelion/tunnel.py`  | Open/close the SSH tunnel to the H100, wait until live |
+| `dandelion/doctor.py`  | Diagnose connection/setup (DNS, port, token, `/test_route`) |
+| `dandelion/client.py`  | One `connect()` over the bundled kernel, `solveit_client`, and an in-memory mock |
+| `dandelion/app.py`     | The web UI (FastHTML), styled like the Claude desktop app |
+| `dandelion/cli.py`     | `python -m dandelion.cli targets / doctor / up / serve` |
+
+The mock fallback means the UI runs **with no server at all** — handy for
+trying the interface or developing it away from the H100. When a real target is
+reachable it talks to it directly.
+
+## Quick start
+
+The only prerequisite is [uv](https://docs.astral.sh/uv/) — it manages Python and
+every dependency for you, so you never touch `pip` or a venv by hand.
+
+```bash
+# 1. install uv (once)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. get the repo
+git clone https://github.com/slegroux/pappus.git dandelion && cd dandelion
+
+# 3. install EVERYTHING up front — the base app, the kernel's numpy/torch/… stack,
+#    `paper` (marker — REQUIRED to open PDFs: structure, sections, equations,
+#    figures), and `web` (trafilatura) for clean web-page → markdown. This is
+#    the step that's easy to skip: the app runs without it, but the kernel
+#    server won't start, the UI silently falls back to the in-memory mock (so
+#    your saved dialogs don't load), and PDFs won't open at all. torch is
+#    large — let it finish once.
+uv sync --extra kernel --extra paper --extra web
+
+# 4. run it (needs `just` — `brew install just`). Starts the kernel server AND the
+#    web UI in the background, then opens the browser:
+just start        # → kernel on :5055, UI on http://localhost:8000  (stop: just stop)
+```
+
+No `just`? Run the two processes yourself in two terminals:
+
+```bash
+# terminal 1 — the kernel server (executes your code)
+uv run --extra kernel python -m server.kernel_server --port 5055
+# terminal 2 — verify the connection, then launch the UI
+uv run python -m dandelion.cli doctor kernel     # every check should pass
+DANDELION_TARGET=kernel uv run python -m dandelion.cli serve   # → http://localhost:8000
+```
+
+**Is it live?** Look at the LED in the top-right: **green** = the UI reached the
+kernel (your dialogs load, code runs for real); **amber** = it fell back to the mock
+(only the `demo/welcome` dialog, nothing executes). Amber almost always means the
+kernel server on `:5055` isn't up — check `~/Library/Logs/Dandelion/kernel.log`
+and run `uv run python -m dandelion.cli doctor kernel` to see exactly what's missing.
+
+## Setup
+
+This project uses [uv](https://docs.astral.sh/uv/). Install it once
+(`curl -LsSf https://astral.sh/uv/install.sh | sh`), then you never run `pip`
+or manage a venv by hand — `uv run` reads `pyproject.toml`, creates the venv, and
+installs deps on first use.
+
+```bash
+# H100 token (your _solveit cookie value; see solveit_client README to grab it)
+export SOLVEIT_H100_TOKEN='...'
+```
+
+Edit `targets.yaml` and set the `h100.ssh.host` to your H100 (an entry in
+`~/.ssh/config`, or `user@1.2.3.4`).
+
+> Prefer pip? It still works: `pip install python-fasthtml pyyaml uvicorn`
+> (add `solveit_client` to connect to a SolveIt server), then drop the `uv run`
+> prefix from the commands below.
+
+## The bundled kernel server
+
+Code runs on a small **kernel server** that ships with Dandelion and genuinely
+executes Python. It's the fastest way to see the interface go *live* (green LED)
+end-to-end:
+
+```bash
+# one command — start the kernel server AND the UI together (Ctrl+C stops both):
+just dev        # → kernel on :5055, UI on http://localhost:8000
+
+# …or the two steps by hand:
+# terminal 1 — start the kernel server (--extra kernel adds numpy/torch/etc.)
+uv run --extra kernel python -m server.kernel_server --port 5055
+# terminal 2 — verify and launch
+uv run python -m dandelion.cli doctor kernel      # -> all checks pass
+DANDELION_TARGET=kernel uv run python -m dandelion.cli serve
+```
+
+> `just dev` needs [`just`](https://github.com/casey/just) (`brew install just`).
+> `just dev` runs in the **foreground** (Ctrl+C stops). To run it like a service,
+> use the background pair **`just start`** / **`just stop`**. Run `just` to see all
+> recipes (`start`, `stop`, `dev`, `app`, `kernel`, `ui`, `test`, `doctor`).
+
+### Run it like a Mac app
+
+`just app` builds a double-click **`Dandelion.app`** launcher: it starts the
+kernel server and the UI (if not already running), then opens the browser to the
+app — quitting it stops the servers it launched. Drag it to `/Applications` and
+your Dock. It's a thin launcher around the same servers (not a native wrapper),
+so it stays light; logs go to `~/Library/Logs/Dandelion/`. Re-run `just app`
+if you move the project (the path is baked into the bundle). To stop everything
+from the terminal: `just stop`.
+
+The LLM SDKs (anthropic/openai/zhipuai) are in the base install, so Ask AI works
+as soon as you add a key in Settings — no extra flag needed.
+
+The bundled `kernel` target (`backend: kernel` in `targets.yaml`) runs real Python
+in a persistent per-dialog namespace — variables carry across cells, just like a
+notebook. On the **H100**, run the same server there and `uv run python -m dandelion.cli up h100`
+tunnels it back.
+
+> **Security.** `/exec` runs arbitrary code, so the kernel server is secure by
+> default: on loopback it's open (local dev), but it **refuses to bind a
+> non-loopback host without `--token`** (or `DANDELION_KERNEL_TOKEN`), after which
+> every request must carry a matching `_solveit` cookie. The H100 flow keeps it on
+> `127.0.0.1` and reaches it through the SSH tunnel, so no token is needed; only
+> pass `--token` if you expose the port directly. Likewise, the UI server binds
+> `127.0.0.1` by default — set `DANDELION_HOST=0.0.0.0` to expose the UI on your LAN.
+
+### Connecting to a SolveIt server
+
+The kernel server speaks the same API as Answer.AI's `solveit_client`, so
+Dandelion can also talk to a SolveIt server: install the `solveit` extra and point
+the `local` or `h100` target at it (`backend: solveit`). `solveit_client` defaults
+to `http://localhost:5001` and accepts a dummy token on localhost; for a hosted
+instance, set the target's `url` to it and drop the SSH tunnel.
+
+## Two dependency groups: the server vs your coding stack
+
+Dandelion keeps two kinds of dependency apart, because they serve different jobs:
+
+- **The server** (base install) — what *runs* dandelion: FastHTML, uvicorn, the
+  markdown/code renderers, and the AI SDKs. Light by design.
+- **The coding environment** (`kernel` extra) — what your *notebook code* imports:
+  numpy, pandas, matplotlib, scikit-learn, scipy, torch. Kept separate because
+  torch is large, and because the kernel server is a standalone HTTP process —
+  this stack belongs wherever the kernel actually runs.
+
+| Extra | Installs | Where it belongs |
+|-------|----------|------------------|
+| (base) | FastHTML, uvicorn, mistune, pygments, AI SDKs | wherever the **app** runs |
+| `kernel` (alias `ml`) | numpy, pandas, matplotlib, scikit-learn, scipy, torch | wherever the **kernel** runs |
+| `paper` | marker-pdf | app, for high-quality PDF → markdown |
+| `web` | trafilatura | app, for clean web-page/blog → markdown |
+| `solveit` | solveit_client | app, to connect to a SolveIt server |
+| `all` | kernel + paper + web + solveit | a full local workstation |
+
+```bash
+# one machine, one venv: give the kernel the coding stack
+uv run --extra kernel python -m server.kernel_server --port 5055
+```
+
+Because the kernel talks to the app over HTTP, you can also **separate the
+environments entirely**: run the kernel server in its own venv (or on the H100)
+with `[kernel]` installed, and keep the app's venv lean — the app never imports
+torch, only the kernel does. (This is exactly the laptop-app ↔ H100-kernel split.)
+
+matplotlib defaults to the headless `Agg` backend on the server, so
+`plt.savefig(...)` works without a display.
+
+## Models & API keys
+
+The default **Codex CLI** model uses your installed `codex` command with an
+explicit Dandelion choice of `gpt-5.5` at `high` reasoning, so it needs no
+Dandelion API key. Open the **⚙ Settings** page (gear, top-right) to paste API
+keys for the direct SDK providers — Anthropic (Claude) and Zhipu (GLM). Keys are stored in
+`~/.config/dandelion/secrets.json` (chmod 600, gitignored); an environment
+variable of the same name always overrides the file.
+
+### Which tools the AI may use
+
+The Claude CLI Ask AI routes run as a `claude` agent, so they *could* have the
+full tool set. What they may and may not do is declarative — one file,
+`~/.config/dandelion/tools.json` (override with `DANDELION_TOOLS`). The
+Codex CLI route stays read-only at the filesystem/shell layer and gets only the
+notebook-cell MCP tools described below.
+
+```json
+{
+  "allow": ["WebSearch", "WebFetch"],
+  "deny":  ["Write", "Edit", "Bash"]
+}
+```
+
+The **defaults** (no file needed) keep the AI a thinking partner: **web research
+is allowed**, so the AI can ground answers in current facts instead of its
+training cutoff — while the **executor's hands are denied** (`Write`/`Edit`/`Bash`:
+running code or working off-screen is your job, not the AI's). Edit the lists to
+taste; set `"deny": []` to fully open it up. The cell-editing tools are wired
+separately (they need the local MCP server) and gated by `DANDELION_CELL_TOOLS`.
+
+## Use it
+
+```bash
+# 1. (remote only) open the tunnel to the H100 in one terminal
+uv run python -m dandelion.cli up h100
+
+# 2. check a target is healthy
+uv run python -m dandelion.cli doctor h100
+
+# 3. launch the UI
+uv run python -m dandelion.cli serve        # http://localhost:8000
+```
+
+In the UI, the top-right dropdown flips between `local` and `h100`. A green LED =
+live server; amber = running on the mock (with a banner telling you why).
+
+### Editable cells
+
+Every message is a live cell, like a notebook:
+
+- **Rendered by default, click to edit** — notes show as **markdown**, code as
+  **syntax-highlighted** Python, prompts show their question + the AI's markdown
+  answer. Click any cell to drop into a raw editor; **Save/Run/Ask** commits,
+  **Cancel** discards. All rendering and highlighting is server-side (mistune +
+  Pygments) so it works offline, no CDN.
+- **Run / re-run** — hover a cell for its **Run / In context / Pin / Delete**
+  controls, or press **Cmd/Ctrl+Enter** while editing. Code re-executes in the
+  persistent kernel namespace; an *Ask AI* cell re-asks with the edited prompt.
+
+Edits and runs swap only the conversation (via htmx), so re-running a cell never
+reloads the whole page.
+
+#### Collapsible sections
+
+A **note that starts with a markdown heading** (`#`, `##`, …) becomes a section
+header with a **▾ caret**: click it to fold every cell beneath it, down to the
+next heading of the **same or higher level** (so collapsing a `#` folds its `##`
+subsections too). The header shows an **"N hidden"** pill, and the collapsed state
+is **remembered per dialog**. Folding is **view-only** — hidden cells still run
+and still count toward the AI context (use **Mute** to drop a cell from context).
+
+#### Link to any cell
+
+Every cell has a stable id, and you can link to it. Hover a cell
+and click the **🔗** button to copy its **`#_<id>` anchor** (that's exactly the
+string you paste to reference it — the copy button *is* the id-getter, so you
+never hunt for one).
+
+Two ways to write a link in a note or AI prompt:
+
+- **Bare reference** — type **`#_<id>`** and it becomes a clickable link.
+- **Markdown link with your own label** — `[jump to the setup](#_<id>)`, the
+  ordinary markdown syntax you already know.
+
+Either way, clicking a **same-dialog** link scrolls to that cell in place (with a
+brief highlight) — no reload, and it won't trip the cell's click-to-edit. Prefix a
+dialog path — **`#folder/dialog/_<id>`** or `[label](#folder/dialog/_<id>)` — to
+link **across dialogs**: clicking opens that dialog at the cell. References inside
+code blocks are left alone, so a `#`-comment in your Python isn't turned into a
+link, and ordinary links (`[docs](https://…)`, `[heading](#section)`) are
+untouched. Because the AI sees each cell tagged with its id, it can drop these
+references into its answers too — "as we set up in `#_a1b2c3d4`…" becomes a real
+link. This is the substrate for treating your dialogs as a **linked, navigable
+knowledge base**.
+
+#### Keyboard shortcuts (Jupyter-style)
+
+The notebook has a **command mode** and an **edit mode**, like Jupyter:
+
+| Key | Action |
+|-----|--------|
+| `Enter` | enter edit mode on the selected cell |
+| `Esc` | leave edit mode back to command mode (no edits lost) |
+| `↑` / `↓` or `k` / `j` | select the previous / next cell |
+| `a` / `b` | insert a **note** cell above / below (use the ＋ menu for code / Ask AI) |
+| `y` / `m` / `i` | convert the cell to **code** / **note** (markdown) / **Ask AI** |
+| `dd` | delete the selected cell |
+| `z` | undo the last delete |
+| `Cmd`/`Ctrl`/`Shift`+`Enter` | run the cell |
+
+The **selected** cell shows a green bar on its left. Command-mode keys only fire
+when no editor or input is focused, so they never interrupt typing. Each cell's
+hover toolbar also has a **⇆ menu** to change its type and a **＋ menu** to
+insert **Code / Note / Ask AI** above or below — so the shortcuts are
+discoverable. Converting a cell keeps its source text (a prompt's question
+becomes the new source) and clears any stale output.
+
+#### Code completion
+
+In a code cell, completion suggestions appear **as you type** —
+or press **`Ctrl+Space`** to summon them. **`Tab`** (or `Enter`) accepts the
+highlighted one; `Esc` dismisses. It's **namespace-aware**: completions come from
+the kernel's live state via [jedi](https://github.com/davidhalter/jedi), so after
+you run `import numpy as np`, typing `np.ar` offers `arange`; after `df =
+pd.read_csv(...)`, `df.` offers its columns and methods. Like Jupyter, it
+completes against what you've actually **run** — variables you've typed but not
+executed are inferred from the source where possible. Completion needs the
+**kernel** backend (it introspects a real namespace); the mock/Claude-only
+targets don't offer it, and it's part of the `kernel` extra.
+
+#### The AI sees the notebook
+
+An *Ask AI* cell isn't answered in isolation — the
+**cells above it** (notes, code, code output, prior Q&A) are sent as context, so
+you can ask "what did that return?" or "why is this slow?" and it knows.
+
+To keep within the model's token window, context is managed two ways:
+
+- **Truncation (automatic)** — long outputs are middle-out truncated, and if the
+  whole notebook exceeds a budget the **oldest** cells drop first (newest are most
+  relevant). Tune with `DANDELION_CTX_OUT_TRUNC` and `DANDELION_CTX_MAX_CHARS`.
+- **Mute (manual)** — each cell has an **In context / Muted** toggle. Muting drops
+  it from what the AI sees (it dims, but still runs) — the lever for steering
+  context and staying under the limit.
+
+Each cell shows an estimated **token count**, and a live meter at the foot of the
+dialog reads out the total context (`AI context ≈ N tokens · M/K cells in`) — so
+you can see yourself approaching the limit. **Pin** a cell (toggle next to Mute)
+to keep it in context even when older cells are trimmed.
+
+This applies to the bundled **kernel** backend. On a **solveit** target,
+the server assembles the dialog context itself.
+
+#### Inject live values into a prompt
+
+Put `` $`expr` `` anywhere in an *Ask AI* prompt and it's replaced with the value
+of that Python expression — evaluated against the **live kernel namespace, fresh
+each time you send**. So after you run
+`df = pd.read_csv(...)`, asking
+
+> Why might `` $`df.shape` `` rows drop to `` $`len(df.dropna())` `` after dropna?
+
+sends the AI the *actual* numbers, not the literal text. It's the same idea as an
+f-string, in the prompt: a bare name (`` $`n` ``) injects its current value, and a
+full expression (`` $`len(items)` ``, `` $`df.columns.tolist()` ``) is computed on
+the spot. Only the text the AI receives is filled in — the cell keeps the raw
+`` $`…` `` so it re-evaluates on every re-ask. A lone `$` (e.g. `$5`) is left
+alone, and an expression that errors (a typo'd name) becomes a visible
+`` [unresolved `…`] `` marker instead of aborting the prompt, so the AI still sees
+the rest of your question.
+
+This needs the **kernel** backend (the expression runs in its namespace); the
+mock target leaves `` $`…` `` literal, and a **solveit** target does its own
+injection server-side. Oversized values are truncated so one big object can't blow
+the prompt open.
+
+#### AI modes — learning / concise / standard
+
+Next to the model picker in the composer is a **mode** dropdown
+(`learning` / `concise` / `standard`) that tunes *how* the AI responds. The
+small-steps persona is always on underneath; the mode layers a directive on top:
+
+- **learning** (default) — favours your understanding over a finished answer. It
+  asks a short guiding question or gives a hint and leaves room for you to try;
+  when you're stuck it shows the smallest unblocking piece and the idea behind it,
+  rather than handing over a whole solution. This is the point of the tool.
+- **concise** — minimal prose, compact runnable code, no boilerplate or recap.
+- **standard** — answers fully, with complete code and explanation when you ask.
+
+The chosen mode is remembered and stored on each prompt (like the model), so a
+re-ask uses the mode it was sent with. Switching mode mid-dialog takes effect on
+the next turn. On the subscription Claude CLI path a mode change starts a
+fresh session so the new directive actually applies (a resumed session can't
+rewrite its own system prompt). The Codex CLI path also keeps a conservative
+read-only session per dialog when the notebook is append-only; if earlier cells
+change, mode/model/tool settings change, or the session can't be resumed safely,
+Dandelion starts a fresh `codex exec --json` turn and re-sends the full notebook
+context. The notebook stays the source of truth. Works on every backend: the
+persona/mode is built app-side and sent as the model's system preamble or prompt
+envelope. After installing or changing Codex addons/plugins, start a new dialog
+or otherwise force a fresh Codex session if the current dialog is still
+resuming.
+
+#### The AI can edit cells (Max plan)
+
+Ask AI doesn't only *answer* — it can **edit the notebook for you**. Ask it to
+"fix the bug in **cell 3**," "vectorise this loop," or "add a test below," and it
+rewrites the target cell (or inserts a new one) in place; the notebook refreshes
+to show the change. It runs through the local
+[MCP server](../server/mcp_cells.py) exposing `list_cells` / `update_cell` /
+`str_replace` / `insert_cell`. The tools are available to the Codex and Claude
+CLI model choices; Codex uses the installed `codex` CLI, while Claude uses your
+**Claude Max subscription** (no API credits) via the `claude` CLI.
+
+**Pointing it at a cell.** Each cell shows a small **number** in its gutter, and
+the AI sees that same number — every cell reaches it tagged `n="3" id="…"`. So
+you can say "fix cell 3," or just describe it ("the `add` function"), and it
+targets the right one without you ever typing an id. Numbers are positional, so
+they renumber when you insert, delete, or reorder cells.
+
+It only touches cells when you **explicitly ask**; an ordinary question is still
+answered in text. The tools are loopback-only and token-guarded, and active only
+on local CLI models (Codex and Claude CLI choices). Set `DANDELION_CELL_TOOLS=0`
+to turn them off (e.g. for the leanest time-to-first-token).
+
+#### …but the right hands, not a free-roaming agent
+
+Notice what those cell tools have in common: they edit the **shared notebook you
+can see**, and they never *run* code — you still press run yourself. That's
+deliberate: the human is the agent; the AI is a thinking partner working in small
+steps.
+
+The catch is that the Max-plan path shells out to `claude -p`, which is the full
+Claude Code **agent** — so out of the box it *also* has Write/Edit/Bash. Left
+alone it does what agents do: writes the whole solution to a scratchpad file and
+executes it off-screen, taking the executor's seat you're supposed to hold and
+steamrolling the small-steps [persona](../dandelion/claude_cli.py) we append. So
+Dandelion launches it with `--disallowed-tools Write Edit Bash`
+([dandelion/claude_cli.py](../dandelion/claude_cli.py)). The line it draws: the AI may
+make **visible, in-notebook** edits when asked, but it can't run code or work
+off-screen. This strips only the *spawned assistant's* hands — your own Claude
+Code tools are untouched.
+
+#### Rich output
+
+Code cells render **plots and rich values inline**, not just text: matplotlib
+figures are captured as images, and anything implementing the notebook display
+protocol (`_repr_html_` for DataFrames, `_repr_png_` for images) renders too. A
+trailing `;` suppresses the last expression's value, Jupyter-style.
+
+## Your work is saved
+
+Dialogs on the bundled **kernel** backend are persisted to disk — one JSON file
+per target at `~/.config/dandelion/dialogs-<target>.json` (override the
+directory with `DANDELION_DATA`). So your notebook survives a restart, and it
+survives the backend being rebuilt when you save Settings or switch targets.
+Cells, outputs, plots, and pin/mute flags are all restored. (The mock fallback
+used when no server is reachable stays ephemeral; a **solveit** target keeps
+its dialogs on that server.)
+
+Everything you create stays **local to the machine and out of git**: notebooks,
+papers, the recall schedule, libraries and the blog project all live under that
+one directory. To move to a new install, or keep a copy somewhere safe:
+
+```bash
+just backup ~/pCloud/            # one timestamped .tar.gz (API keys left out)
+just backup ~/x --with-secrets   # include secrets.json too; keep that archive private
+just stop && just restore ~/pCloud/dandelion-backup-….tar.gz   # on the new install
+```
+
+Restore keeps any file that already exists unless you pass `--force`, and it
+refuses to run while the app is up (stop it with `just stop` first).
+
+The notebook store also protects itself. Every save keeps the previous version
+as `dialogs-<target>.json.bak`, and while you work a timestamped copy goes to
+`backups/` every 15 minutes, newest 20 kept (`DANDELION_SNAPSHOT_MINUTES`,
+`DANDELION_SNAPSHOT_KEEP`). If the store is ever unreadable, the app sets the
+damaged file aside as `….corrupt-<time>`, reopens the newest good copy, and says
+so in a banner instead of starting empty. Which
+cells are collapsed and the table-of-contents state are per browser and are not
+part of a backup. An older checkout that kept dialogs in the repo's `data/`
+folder is moved into the local directory the first time the UI server starts.
+
+**Coming from Pappus or SolveIt Sidekick?** The first start moves `~/.config/pappus`
+(or `~/.config/solveit-sidekick`) to `~/.config/dandelion` and leaves a link at the
+old path; converted papers keep their cache. If an older server is still running,
+it leaves your data where it is and says so: stop it with `just stop`, then start
+again. Notebook code that imported
+`pappus.*` modules (e.g. `from pappus.audio import play`) now imports `dandelion.*`.
+
+## Building a Python library from your dialogs
+
+Your dialogs are where you *learn*; a **library** is how you *ship* what you
+worked out — and the two stay separate (see
+[docs/design/graph-vs-tree.md](design/graph-vs-tree.md)). Rather than one
+notebook = one package, libraries are **cell-centric**: tag any cell, in any
+dialog, into a library.
+
+### Step by step
+
+1. **Tag cells.** On a code cell, hover for the **Lib** picker → choose a library
+   and a module (or type the directive yourself). Cells from *different* dialogs
+   can feed the same library.
+
+   ```python
+   #| export audiolib:layers      # this cell → library `audiolib`, module `layers`
+   class Conv1d: ...
+   ```
+
+   A plain `#| export <module>` with no `lib:` prefix stays dialog-local, as before.
+2. **Register the library.** Open **📦 Libraries** (top bar) → *New library* (a
+   name; package name and target dir are optional). Each card shows a live
+   **"N cells · M modules"** count of what's tagged to it, and its on-disk path.
+3. **Build.** Click **Build** on the card — or, from the CLI, across all dialogs:
+
+   ```bash
+   uv run python -m dandelion.cli library build audiolib ./audiolib
+   ```
+
+   Dandelion gathers every cell tagged `audiolib:*`, groups them by module, and
+   tangles them into a real `.py` package. The banner reports the result
+   (`✓ built with nbdev`) and where it landed.
+4. **Use it.** Click **Use in kernel**, then `import audiolib` in any code cell —
+   no `sys.path` boilerplate. (Or `pip install -e <the dir>` to use it elsewhere.)
+5. **Improve.** Each generated function links back to its source cell (see
+   *Provenance* below); click through, edit the cell, then **Build** again.
+
+### How it works
+
+Dandelion owns the *cells → notebooks* step; **nbdev** owns *notebooks → package +
+docs + tests*. It projects the tagged cells into an nbdev project (one notebook per
+module) and runs `nbdev-export`.
+
+On the *first* build to a fresh dir, Dandelion generates a real nbdev
+`pyproject.toml` (full `[tool.nbdev]`, entry-points, setuptools config) with
+[nbdev](https://nbdev.fast.ai)'s own `nbdev_create_config` — **offline**;
+*rebuilds* reuse the existing project and just refresh the notebooks, then
+`nbdev-export` tangles them into the `.py` package. This deliberately avoids
+`nbdev-new`, whose one-time template download hits the *unauthenticated* GitHub
+API (hardcoded, so a token can't fix it) and gets rate-limited — `nbdev_create_config`
+touches no network, so Build never rate-limits. The tradeoff: the template extras
+`nbdev-new` adds (`LICENSE`, `.github` CI, docs styling) aren't generated — run
+`nbdev-new` yourself once if you want them. If nbdev isn't installed, Build falls
+back to a minimal `pyproject.toml` (still tangles to `.py`); `DANDELION_NBDEV_SCAFFOLD=0`
+forces that path. Install nbdev with the `nbdev` extra
+(`uv pip install "dandelion[nbdev]"`).
+
+Two nice properties fall out:
+
+- **Cross-dialog assembly** — a module can draw cells from several unrelated
+  learning dialogs. `audiolib/layers.py` might hold a `Conv1d` from your `conv1d`
+  dialog and a `Conv2d` from your `u-net` dialog.
+- **Provenance** — each generated function carries a `# source: <dialog> #<id>`
+  comment that is also a [message-ID link](#link-to-any-cell) back to the cell you
+  wrote it in. The built library points home to the dialogs it came from.
+
+The dialog cells are the source of truth; the notebooks and `.py` are generated
+(never hand-edited), so you keep improving the library by editing the cells and
+rebuilding.
+
+**Use it back in a dialog.** After Build, click **Use in kernel** on the library's
+card — Dandelion puts the built package on the kernel's path, so `import <pkg>`
+just works in any code cell (no `sys.path` boilerplate). That closes the loop:
+build a library from your cells, import it back, use it, and — via the provenance
+links — click straight back to the source cell when you want to change something.
+(Kernel backend only; on a solveit target you'd install the package yourself.)
+
+## Reading papers (and web pages)
+
+Open a source with the **📄** button — **choose a PDF** or **paste any URL** — and
+it appears in a left reading column. The URL field **auto-detects** what you give
+it:
+
+- An **arXiv** link (`arxiv.org/abs/…`), a **`.pdf`** link, or anything served as
+  `application/pdf` is **downloaded and run through marker** (the PDF pipeline —
+  equations as LaTeX, tables, structure). So pasting `arxiv.org/abs/1706.03762`
+  imports the *paper*, not the abstract page.
+- Any other page (a **blog/article**) is fetched and reduced to just the main
+  content (no nav/ads/footer): **trafilatura** with the **`web`** extra
+  (`uv pip install "dandelion[web]"`), or a built-in **bs4 + markdownify**
+  fallback without it.
+
+Either way the source becomes markdown in the same reader, so the stepper,
+highlight-import, and TOC all work the same. **Highlight any passage** and a small
+toolbar pops up:
+
+- **→ Notebook** — import the highlighted passage as a **note**, followed by an
+  **empty code cell that opens focused**, so you can *reimplement that idea
+  yourself*. This is the cherry-pick flow: pull in only the parts that matter,
+  skip the rest of the paper.
+- **Ask AI ↗** — drop the quoted passage into the composer (Ask AI mode), so your
+  next question carries it as context.
+
+You can hide the paper text with the **▾** toggle (the header — name, controls —
+stays put) to give the notebook more room. Closing the panel entirely (**✕**)
+isn't one-way either: once a paper's cells have been imported, its dialog
+remembers the source, and a **📖** button in the top bar **reopens the paper**
+whenever you're back in that dialog — the conversion is cached, so it's instant.
+
+### Or step through it, the way Jeremy Howard does
+
+Prefer to go front-to-back? The **Next section ▸** button works the paper the
+*dialogue-engineering* way — small steps, deep understanding — instead of dumping
+the whole thing. Each click brings the **next section** into the notebook as a
+**note** + a focused **code cell** to reimplement, and a counter (`2/3`) tracks
+your progress (the AI sees everything above, so "is my version equivalent?" just
+works). Prefer it all at once? The **¶** / **§** buttons bulk-import every
+paragraph or section as notes — the paper stays open alongside, so you can keep
+highlighting passages into the same dialog (close it with **✕** when done).
+
+PDFs are converted to markdown and rendered with the same math/code pipeline as
+the rest of the app. The reader is **marker** — **required** for PDFs: install
+the **`paper`** extra (`uv pip install "dandelion[paper]"`, also in
+`[all]`). It preserves structure, tables, **equations as LaTeX** (rendered via
+KaTeX), and **figures/diagrams** — extracted images are saved next to the
+conversion cache and render inline, both in the reading panel and in the note
+cells you import (papers converted before figure support pick it up on
+re-conversion: delete their cached `.md` under the papers cache). marker is
+heavy (torch + model downloads, GPL-3.0) and slow, so conversions run in the
+background and are cached to disk. Without it, opening a PDF shows the install
+hint in the panel — there's deliberately no degraded text-only fallback —
+though already-converted papers still open from the cache. Web pages don't
+need it.
+
+Papers are **local, like everything else**: the uploaded PDFs, their converted
+markdown, extracted figures, and the dialog→source index live in
+`~/.config/dandelion/papers` (set `DANDELION_PAPERS` to move it) and are
+included in `just backup`.

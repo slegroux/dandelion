@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="400" height="116" viewBox="0 0 400 116" role="img" aria-label="Pappus">
-  <!-- mark: a dandelion seed (a pappus); the only colourful mark in the UI -->
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="116" viewBox="0 0 400 116" role="img" aria-label="Dandelion">
+  <!-- mark: a dandelion seed; the only colourful mark in the UI -->
   <g transform="translate(2 2) scale(1.7)" stroke-linecap="round">
   <line x1="32" y1="30" x2="7.02" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
   <circle cx="7.02" cy="29.13" r="2.5" fill="#7C5CFF"/>
@@ -26,6 +26,6 @@
   <line x1="32" y1="30" x2="32" y2="49" stroke="#0B0B0B" stroke-width="1.6"/>
   <ellipse cx="32" cy="55" rx="3.2" ry="6.5" fill="#256ABF"/>
   </g>
-  <text x="124" y="66" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="52" font-weight="650" letter-spacing="-1" fill="#0B0B0B">Pappus</text>
+  <text x="124" y="66" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="52" font-weight="650" letter-spacing="-1" fill="#0B0B0B">Dandelion</text>
   <text x="126" y="96" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace" font-size="16" fill="#52514E">a notebook that teaches</text>
 </svg>

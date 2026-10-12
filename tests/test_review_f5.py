@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from server import kernel_server
-from pappus.client import MockBackend
+from dandelion.client import MockBackend
 
 
 def _poll_until_done(dialog: str, run_id: str, timeout: float = 5.0) -> dict:

@@ -1,6 +1,6 @@
 """Tests for the security/robustness review changes (W3, W4, S8, SEC-*).
 
-Mirrors tests/test_pappus.py: no SolveIt server, no network — the Starlette
+Mirrors tests/test_dandelion.py: no SolveIt server, no network — the Starlette
 TestClient's default Host is "testserver", which the localhost guard allows.
 """
 import importlib
@@ -16,7 +16,7 @@ from starlette.testclient import TestClient
 
 
 def _client():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "guard/test"
     app.STATE["backend"].messages("guard/test")   # ensure the dialog exists
     return app, TestClient(app.app)
@@ -61,7 +61,7 @@ def test_cross_site_fetch_rejected():
 
 # ---- W4: audio rich output --------------------------------------------------
 def test_audio_rich_view():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     html = to_xml(app._rich_view({"type": "audio/wav", "data": "AAA="}))
     assert "<audio" in html
@@ -70,8 +70,8 @@ def test_audio_rich_view():
 
 # ---- S8: import performs no network probe -----------------------------------
 def test_import_no_network(monkeypatch):
-    import pappus.doctor as doctor
-    import pappus.app
+    import dandelion.doctor as doctor
+    import dandelion.app
     calls = []
 
     def spy(t):
@@ -79,14 +79,14 @@ def test_import_no_network(monkeypatch):
         return (False, "AUTH", "patched — no real probe")
 
     monkeypatch.setattr(doctor, "check_test_route", spy)
-    importlib.reload(pappus.app)                 # re-run module top level
-    assert calls == [], "importing pappus.app performed a network probe"
+    importlib.reload(dandelion.app)                 # re-run module top level
+    assert calls == [], "importing dandelion.app performed a network probe"
 
 
 # ---- SEC-sanitize: publish path strips scripts ------------------------------
 def test_blog_sanitizes_html():
     from types import SimpleNamespace
-    from pappus import blog
+    from dandelion import blog
     m = SimpleNamespace(
         msg_type="code", content="df", output="",
         rich=[{"type": "text/html",
@@ -100,7 +100,7 @@ def test_blog_sanitizes_html():
 
 # ---- SEC-path: sibling-prefix traversal is rejected -------------------------
 def test_path_guard_sibling_prefix(tmp_path, monkeypatch):
-    import pappus.app as app
+    import dandelion.app as app
     base = tmp_path / "vendor"
     base.mkdir()
     sibling = tmp_path / "vendor-evil"          # shares the "vendor" prefix
@@ -114,27 +114,27 @@ def test_path_guard_sibling_prefix(tmp_path, monkeypatch):
 
 # ---- SEC-lan: refuse an unauthenticated non-loopback bind -------------------
 def test_lan_bind_refused(monkeypatch):
-    import pappus.cli as cli
-    monkeypatch.setenv("PAPPUS_HOST", "0.0.0.0")
-    monkeypatch.delenv("PAPPUS_APP_TOKEN", raising=False)
+    import dandelion.cli as cli
+    monkeypatch.setenv("DANDELION_HOST", "0.0.0.0")
+    monkeypatch.delenv("DANDELION_APP_TOKEN", raising=False)
     with pytest.raises(SystemExit):
         cli.cmd_serve(None)
     # The refusal is unconditional: a token must NOT unlock a non-loopback bind,
     # since the app enforces no auth (that would be false security).
-    monkeypatch.setenv("PAPPUS_APP_TOKEN", "anything")
+    monkeypatch.setenv("DANDELION_APP_TOKEN", "anything")
     with pytest.raises(SystemExit):
         cli.cmd_serve(None)
 
 
 # ---- tailnet peer trust: `tailscale serve` on macOS forwards the tailnet IP -----
 def test_peer_gate_loopback_always_ok():
-    import pappus.app as app
+    import dandelion.app as app
     for p in ("127.0.0.1", "::1", "testclient"):
         assert app._peer_ok(p)
 
 
 def test_peer_gate_rejects_non_loopback_by_default(monkeypatch):
-    import pappus.app as app
+    import dandelion.app as app
     monkeypatch.setattr(app, "_TRUST_TAILNET", False)
     # Off by default: a tailnet IP is treated like any other remote peer → rejected.
     assert not app._peer_ok("100.125.88.8")
@@ -142,7 +142,7 @@ def test_peer_gate_rejects_non_loopback_by_default(monkeypatch):
 
 
 def test_peer_gate_trusts_tailnet_when_enabled(monkeypatch):
-    import pappus.app as app
+    import dandelion.app as app
     monkeypatch.setattr(app, "_TRUST_TAILNET", True)
     # Tailscale CGNAT (v4) and ULA (v6) ranges pass; loopback still passes …
     assert app._peer_ok("100.125.88.8")
@@ -210,8 +210,8 @@ def test_done_button_is_the_touch_escape_hatch():
     phone has no Esc, so edit mode carries a Done button posting to /cell/save
     ("save without executing"). Notes don't need one — their primary IS Save."""
     from fasthtml.common import to_xml
-    from pappus.client import Msg
-    import pappus.app as app
+    from dandelion.client import Msg
+    import dandelion.app as app
 
     for t in ("code", "prompt"):
         html = to_xml(app._cell_edit(Msg("_d", t, "x=1"), num=1))

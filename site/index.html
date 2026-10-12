@@ -3,30 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Pappus</title>
-<meta name="description" content="A local-first notebook where the AI teaches instead of doing the work. It hints, you run the code. Follows Answer.AI's SolveIt method.">
+<title>Dandelion</title>
+<meta name="description" content="A local-first notebook where the AI teaches instead of doing the work. It hints, you run the code.">
 <meta name="theme-color" content="#FAF9F5" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="Pappus">
-<meta property="og:title" content="Pappus: a notebook that teaches">
-<meta property="og:description" content="The AI hints. You run the code. A local-first notebook that follows Answer.AI's SolveIt method, with an AI that never runs your cells and, by default, can't write files.">
+<meta property="og:site_name" content="Dandelion">
+<meta property="og:title" content="Dandelion: a notebook that teaches">
+<meta property="og:description" content="The AI hints. You run the code. A local-first notebook with an AI that never runs your cells and, by default, can't write files.">
 <meta property="og:url" content="https://slegroux.github.io/pappus/">
 <meta property="og:image" content="https://slegroux.github.io/pappus/assets/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Pappus logo, a dandelion seed, beside the line: It hints. You run the code.">
+<meta property="og:image:alt" content="Dandelion logo, a dandelion seed, beside the line: It hints. You run the code.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Pappus: a notebook that teaches">
-<meta name="twitter:description" content="The AI hints. You run the code. A local-first notebook that follows Answer.AI's SolveIt method.">
+<meta name="twitter:title" content="Dandelion: a notebook that teaches">
+<meta name="twitter:description" content="The AI hints. You run the code. A local-first notebook where the AI teaches instead of doing the work.">
 <meta name="twitter:image" content="https://slegroux.github.io/pappus/assets/og.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..600&display=swap">
 <script>
   // apply a remembered theme choice before first paint
-  try { var t = localStorage.getItem("pappus-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
+  try { var t = localStorage.getItem("dandelion-theme") || localStorage.getItem("pappus-theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch (e) {}
 </script>
 <style>
   /* ---------- tokens: light (Claude Design System values) ---------- */
@@ -342,7 +342,7 @@
   }
   .facts b { color: var(--ink); font-weight: 600; }
 
-  /* drifting seeds: the pappus carrying an idea forward */
+  /* drifting seeds: the dandelion carrying an idea forward */
   .seeds { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
   .seed {
     position: absolute;
@@ -926,10 +926,10 @@
 
 <header class="top">
   <div class="wrap">
-    <a class="wordmark" href="#top" aria-label="Pappus, back to top">
+    <a class="wordmark" href="#top" aria-label="Dandelion, back to top">
       <img class="on-light" src="assets/mark.svg" alt="" width="30" height="30">
       <img class="on-dark" src="assets/mark-dark.svg" alt="" width="30" height="30">
-      Pappus
+      Dandelion
     </a>
     <div class="top-right">
       <nav class="links" aria-label="Sections">
@@ -960,7 +960,7 @@
     <div>
       <p class="eyebrow">A local-first notebook that teaches</p>
       <h1>It hints.<br>You <em>run<br>the code.</em></h1>
-      <p class="lede">Pappus is a notebook where the AI is a thinking partner, not a ghostwriter. It follows Answer.AI's SolveIt method: small steps, one cell at a time. The AI <strong>never runs your cells</strong>, and by default <strong>it can't write files</strong>. Running the code is your job.</p>
+      <p class="lede">Dandelion is a notebook where the AI is a thinking partner, not a ghostwriter. You work in small steps, one cell at a time. The AI <strong>never runs your cells</strong>, and by default <strong>it can't write files</strong>. Running the code is your job.</p>
       <div class="cta">
         <a class="btn" href="#install">Get started <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
         <a class="quiet" href="https://github.com/slegroux/pappus">
@@ -1032,7 +1032,7 @@
     <div class="head">
       <p class="eyebrow">The permission design</p>
       <h2>An AI that won't do your homework</h2>
-      <p>A coding agent left alone does what agents do: it writes the whole solution to a scratch file and runs it off-screen. That takes the seat you're supposed to hold. So Pappus keeps the AI's hands off the Run button on every model, and off your files by default.</p>
+      <p>A coding agent left alone does what agents do: it writes the whole solution to a scratch file and runs it off-screen. That takes the seat you're supposed to hold. So Dandelion keeps the AI's hands off the Run button on every model, and off your files by default.</p>
     </div>
 
     <div class="ledger">
@@ -1058,14 +1058,14 @@
       <div class="route-row">
         <div><b>Codex CLI</b><span class="mono">the default model</span></div>
         <div>
-          <p>Runs in Codex's read-only sandbox, so it can't write files. Pappus gives it no web search, only the notebook-cell tools. It is told not to run commands; that part is an instruction, not a lock.</p>
+          <p>Runs in Codex's read-only sandbox, so it can't write files. Dandelion gives it no web search, only the notebook-cell tools. It is told not to run commands; that part is an instruction, not a lock.</p>
         </div>
       </div>
       <div class="route-row">
         <div><b>Claude CLI</b><span class="mono">with a Claude Max plan</span></div>
         <div>
           <p>Web search and page fetch are allowed, so answers can rest on current facts. Write, Edit and Bash are denied. The rules sit in one JSON file you can read and change; <code class="inline">"deny": []</code> opens it up completely.</p>
-          <span class="file-label">~/.config/pappus/tools.json</span>
+          <span class="file-label">~/.config/dandelion/tools.json</span>
 <pre><span class="lang">json</span>{
   <span class="s">"allow"</span>: [<span class="s">"WebSearch"</span>, <span class="s">"WebFetch"</span>],
   <span class="s">"deny"</span>:  [<span class="s">"Write"</span>, <span class="s">"Edit"</span>, <span class="s">"Bash"</span>]
@@ -1118,7 +1118,7 @@
     <figure>
       <div class="browser">
         <div class="chrome" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="url">localhost:8000</span></div>
-        <img src="assets/shot-light.jpg" width="1440" height="900" loading="lazy" alt="Pappus in light mode, dialog fourier/square-wave. A code cell plots partial sums of a square wave with 1, 3 and 9 odd terms in matplotlib, the plot renders inline, and the learner asks: It overshoots at the edges, even with 9 terms. Bug? The AI, labelled Claude · Opus high, names the Gibbs phenomenon.">
+        <img src="assets/shot-light.jpg" width="1440" height="900" loading="lazy" alt="Dandelion in light mode, dialog fourier/square-wave. A code cell plots partial sums of a square wave with 1, 3 and 9 odd terms in matplotlib, the plot renders inline, and the learner asks: It overshoots at the edges, even with 9 terms. Bug? The AI, labelled Claude · Opus high, names the Gibbs phenomenon.">
       </div>
       <figcaption>The learner plotted the partial sums. The AI explains the overshoot they found: the Gibbs phenomenon.</figcaption>
     </figure>
@@ -1126,7 +1126,7 @@
       <figure>
         <div class="browser">
           <div class="chrome" aria-hidden="true"><span class="dots"><i></i><i></i><i></i></span><span class="url">localhost:8000</span></div>
-          <img src="assets/shot-dark.jpg" width="1440" height="900" loading="lazy" alt="Pappus in dark mode, lesson Why only odd harmonics? The learner asks why a square wave has only odd harmonics and adds: Don't give me the answer, help me see it. The AI gives two nudges and no proof. Below, the learner's numpy FFT code prints the magnitude of harmonics 1 to 7: the even ones are near zero.">
+          <img src="assets/shot-dark.jpg" width="1440" height="900" loading="lazy" alt="Dandelion in dark mode, lesson Why only odd harmonics? The learner asks why a square wave has only odd harmonics and adds: Don't give me the answer, help me see it. The AI gives two nudges and no proof. Below, the learner's numpy FFT code prints the magnitude of harmonics 1 to 7: the even ones are near zero.">
         </div>
         <figcaption>"Don't give me the answer, help me see it." Two nudges, then the learner's own FFT.</figcaption>
       </figure>
@@ -1228,7 +1228,7 @@
       <div class="reason">
         <h3>Your notebooks stay on your machine</h3>
         <div>
-          <p>Notebooks, papers, libraries: everything you create lives under <code class="inline">~/.config/pappus</code>, out of git. Every save keeps the previous version, and a timestamped snapshot is taken every 15 minutes while you work.</p>
+          <p>Notebooks, papers, libraries: everything you create lives under <code class="inline">~/.config/dandelion</code>, out of git. Every save keeps the previous version, and a timestamped snapshot is taken every 15 minutes while you work.</p>
           <p><code class="inline">just backup</code> packs it all into one archive, leaving your API keys out unless you ask. Keys themselves sit in a <code class="inline">chmod 600</code> file.</p>
         </div>
       </div>
@@ -1250,9 +1250,9 @@
         </div>
       </div>
       <div class="reason">
-        <h3>SolveIt, or its own kernel</h3>
+        <h3>Its own kernel, or a SolveIt server</h3>
         <div>
-          <p>Point it at a SolveIt server, or run the small SolveIt-compatible kernel server that ships with it. That one executes real Python with a persistent namespace per dialog, and refuses to listen beyond loopback without a token.</p>
+          <p>Code runs on the small kernel server that ships with it: real Python with a persistent namespace per dialog, which refuses to listen beyond loopback without a token. It can also connect to a SolveIt server through Answer.AI's <code>solveit_client</code>.</p>
         </div>
       </div>
     </div>
@@ -1280,7 +1280,7 @@ brew install just</pre>
         <div>
           <h3>Get the code and everything it needs</h3>
           <p>This pulls in the kernel's numpy/torch stack, marker for PDFs, and trafilatura for web pages. torch is large, so let it finish once.</p>
-          <pre><span class="lang">shell</span>git clone https://github.com/slegroux/pappus &amp;&amp; cd pappus
+          <pre><span class="lang">shell</span>git clone https://github.com/slegroux/pappus dandelion &amp;&amp; cd dandelion
 uv sync --extra kernel --extra paper --extra web</pre>
         </div>
       </div>
@@ -1308,14 +1308,14 @@ just app      <span class="c"># optional: a double-click launcher for macOS</spa
 <section class="band alt" id="origins">
   <div class="wrap origin">
     <div>
-      <img class="logo on-light" src="assets/logo-light.svg" alt="Pappus: a notebook that teaches" width="400" height="116">
-      <img class="logo on-dark" src="assets/logo-dark.svg" alt="Pappus: a notebook that teaches" width="400" height="116">
+      <img class="logo on-light" src="assets/logo-light.svg" alt="Dandelion: a notebook that teaches" width="400" height="116">
+      <img class="logo on-dark" src="assets/logo-dark.svg" alt="Dandelion: a notebook that teaches" width="400" height="116">
     </div>
     <div>
       <p class="eyebrow" style="margin-bottom: 14px">Where it comes from</p>
       <h2>Standing on a good method</h2>
-      <p>Pappus follows the method behind Answer.AI's <a href="https://solve.it.com">SolveIt</a>: work in small steps, keep the human in the driver's seat, and let the AI be a thinking partner. It can connect to a SolveIt server or run on its own. It is an independent project, not affiliated with or endorsed by Answer.AI.</p>
-      <p>The name has two halves. In Pólya's <cite>How to Solve It</cite>, "Pappus" is the entry on working backwards from the unknown. And a pappus is the little parachute on a dandelion seed, the thing that carries it forward.</p>
+      <p>Dandelion is built on an old idea about learning: work in small steps, keep the human in the driver's seat, and let the AI be a thinking partner. It runs on its own kernel, and can also connect to a <a href="https://solve.it.com">SolveIt</a> server through Answer.AI's <code>solveit_client</code>. It is an independent project, not affiliated with or endorsed by Answer.AI.</p>
+      <p>The name: blow on a dandelion and the seed head comes apart, each seed carried off on its own little parachute to wherever it takes root. Ideas travel the same way. You're the one who plants them.</p>
       <p>Made by Sylvain Le Groux at <a href="https://slegroux.github.io/sisyphe/">Sisyphe</a>.</p>
     </div>
   </div>
@@ -1325,7 +1325,7 @@ just app      <span class="c"># optional: a double-click launcher for macOS</spa
 
 <footer>
   <div class="wrap">
-    <span>Pappus · by Sylvain Le Groux, <a href="https://slegroux.github.io/sisyphe/">Sisyphe</a></span>
+    <span>Dandelion · by Sylvain Le Groux, <a href="https://slegroux.github.io/sisyphe/">Sisyphe</a></span>
     <span>Not affiliated with or endorsed by Answer.AI. SolveIt is Answer.AI's.</span>
   </div>
 </footer>
@@ -1337,7 +1337,7 @@ just app      <span class="c"># optional: a double-click launcher for macOS</spa
     var dark = root.dataset.theme ? root.dataset.theme === "dark"
       : window.matchMedia("(prefers-color-scheme: dark)").matches;
     root.dataset.theme = dark ? "light" : "dark";
-    try { localStorage.setItem("pappus-theme", root.dataset.theme); } catch (e) {}
+    try { localStorage.setItem("dandelion-theme", root.dataset.theme); } catch (e) {}
   });
 </script>
 </body>

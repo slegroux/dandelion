@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Dandelion social preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400..700;1,8..60,400..600&display=swap">
+<style>
+:root{--page:#FBFCFB;--surface:#FFFFFF;--ink:#0B0B0B;--muted:#52514E;--meta:#6B6A64;--line:#E9E8E8;--bubble:#F1F2F0;--well:#F3F3F0;--inline-bg:#F3F3F0;--accent:#256ABF;
+--sx-kw:#8032C2;--sx-fn:#0051C1;--sx-com:#737373;
+--serif:"Source Serif 4",Georgia,serif;--body:-apple-system,"SF Pro Text","Helvetica Neue",Helvetica,Arial,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box;margin:0}
+html,body{width:1200px;height:630px;overflow:hidden;background:var(--page);color:var(--ink);font-family:var(--body)}
+.logo{position:absolute;left:78px;top:68px;display:flex;align-items:center;gap:14px}
+.logo b{display:block;font-size:34px;font-weight:650;letter-spacing:-1px;line-height:1}
+.logo small{display:block;font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:8px}
+h1{position:absolute;left:76px;top:192px;font-family:var(--serif);font-weight:500;font-size:92px;line-height:96px;letter-spacing:-2px}
+h1 em{font-style:italic}
+.sub{position:absolute;left:78px;top:496px;font-size:21px;color:var(--muted)}
+.sub b{color:var(--ink);font-weight:650}
+.card{position:absolute;left:684px;top:92px;width:512px;height:385px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 2px 4px rgba(11,11,11,.07),0 6px 16px rgba(11,11,11,.08);padding:28px 28px 0 28px;font-size:16px}
+.crumb{display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--meta)}
+.crumb b{color:var(--ink);font-weight:600}
+.pill{border:1px solid var(--line);border-radius:99px;padding:3px 11px;color:var(--muted);font-size:13.5px}
+.user{margin:18px -12px 0 auto;width:max-content;background:var(--bubble);border-radius:14px;padding:11px 16px;font-size:16.5px}
+code{font-family:var(--mono);font-size:.82em;background:var(--inline-bg);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.who{margin-top:20px;font-size:12.5px;color:var(--meta)}
+.ans{font-family:var(--serif);font-size:19px;line-height:27px;margin-top:6px}
+.code{margin-top:18px;border:1px solid var(--line);border-radius:10px;padding:14px 16px;font-family:var(--mono);font-size:15px;line-height:24px;background:#FEFDFD}
+.code i{color:var(--sx-com)} .code .l{font-size:12.5px;color:var(--meta);font-family:var(--body);line-height:16px;margin-bottom:6px}
+.code .f{color:var(--sx-fn)}
+.out{margin:10px 0 0 0;background:var(--well);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-family:var(--mono);font-size:14px}
+.seed{position:absolute}
+</style></head><body>
+<div class="logo"><svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 64 64" style=""><g transform="translate(0 0) scale(1.0)" stroke-linecap="round">
+  <line x1="32" y1="30" x2="7.02" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="7.02" cy="29.13" r="2.5" fill="#7C5CFF"/>
+  <line x1="32" y1="30" x2="8.45" y2="21.61" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="8.45" cy="21.61" r="2.5" fill="#C084FC"/>
+  <line x1="32" y1="30" x2="12.09" y2="14.89" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="12.09" cy="14.89" r="2.5" fill="#FF5C8A"/>
+  <line x1="32" y1="30" x2="17.59" y2="9.57" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="17.59" cy="9.57" r="2.5" fill="#FFB020"/>
+  <line x1="32" y1="30" x2="24.44" y2="6.17" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="24.44" cy="6.17" r="2.5" fill="#10B981"/>
+  <line x1="32" y1="30" x2="32.00" y2="5.00" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="32.00" cy="5.00" r="2.5" fill="#38BDF8"/>
+  <line x1="32" y1="30" x2="39.56" y2="6.17" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="39.56" cy="6.17" r="2.5" fill="#7C5CFF"/>
+  <line x1="32" y1="30" x2="46.41" y2="9.57" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="46.41" cy="9.57" r="2.5" fill="#C084FC"/>
+  <line x1="32" y1="30" x2="51.91" y2="14.89" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="51.91" cy="14.89" r="2.5" fill="#FF5C8A"/>
+  <line x1="32" y1="30" x2="55.55" y2="21.61" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="55.55" cy="21.61" r="2.5" fill="#FFB020"/>
+  <line x1="32" y1="30" x2="56.98" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="56.98" cy="29.13" r="2.5" fill="#10B981"/>
+  <line x1="32" y1="30" x2="32" y2="49" stroke="#0B0B0B" stroke-width="1.6"/>
+  <ellipse cx="32" cy="55" rx="3.2" ry="6.5" fill="#256ABF"/>
+  </g></svg><div><b>Dandelion</b><small>a notebook that teaches</small></div></div>
+<h1>It hints.<br>You <em>run</em><br><em>the code.</em></h1>
+<p class="sub">The AI <b>never runs your cells</b>. You press Run.</p>
+<div class="card">
+ <div class="crumb"><span>learn / <b>attention</b></span><span class="pill">Learning</span></div>
+ <div class="user">Where do I start with <code>Q</code> and <code>K</code>?</div>
+ <div class="who">Claude · Opus high</div>
+ <div class="ans">What shape do you expect <code>Q @ K.T</code> to have? Write that one line and run it.</div>
+ <div class="code"><div class="l">python</div>scores = Q @ K.T &nbsp; <i># no scaling yet</i><br><span class="f">print</span>(scores.shape)</div>
+ <div class="out">torch.Size([4, 4])</div>
+</div>
+<svg xmlns="http://www.w3.org/2000/svg" width="56" height="56" viewBox="0 0 64 64" style="position:absolute;left:1108px;top:22px;opacity:.55"><g transform="translate(0 0) scale(1.0)" stroke-linecap="round">
+  <line x1="32" y1="30" x2="7.02" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="7.02" cy="29.13" r="2.5" fill="#7C5CFF"/>
+  <line x1="32" y1="30" x2="8.45" y2="21.61" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="8.45" cy="21.61" r="2.5" fill="#C084FC"/>
+  <line x1="32" y1="30" x2="12.09" y2="14.89" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="12.09" cy="14.89" r="2.5" fill="#FF5C8A"/>
+  <line x1="32" y1="30" x2="17.59" y2="9.57" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="17.59" cy="9.57" r="2.5" fill="#FFB020"/>
+  <line x1="32" y1="30" x2="24.44" y2="6.17" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="24.44" cy="6.17" r="2.5" fill="#10B981"/>
+  <line x1="32" y1="30" x2="32.00" y2="5.00" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="32.00" cy="5.00" r="2.5" fill="#38BDF8"/>
+  <line x1="32" y1="30" x2="39.56" y2="6.17" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="39.56" cy="6.17" r="2.5" fill="#7C5CFF"/>
+  <line x1="32" y1="30" x2="46.41" y2="9.57" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="46.41" cy="9.57" r="2.5" fill="#C084FC"/>
+  <line x1="32" y1="30" x2="51.91" y2="14.89" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="51.91" cy="14.89" r="2.5" fill="#FF5C8A"/>
+  <line x1="32" y1="30" x2="55.55" y2="21.61" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="55.55" cy="21.61" r="2.5" fill="#FFB020"/>
+  <line x1="32" y1="30" x2="56.98" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="56.98" cy="29.13" r="2.5" fill="#10B981"/>
+  <line x1="32" y1="30" x2="32" y2="49" stroke="#0B0B0B" stroke-width="1.6"/>
+  <ellipse cx="32" cy="55" rx="3.2" ry="6.5" fill="#256ABF"/>
+  </g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="60" height="60" viewBox="0 0 64 64" style="position:absolute;left:602px;top:520px;opacity:.55"><g transform="translate(0 0) scale(1.0)" stroke-linecap="round">
+  <line x1="32" y1="30" x2="7.02" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="7.02" cy="29.13" r="2.5" fill="#7C5CFF"/>
+  <line x1="32" y1="30" x2="8.45" y2="21.61" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="8.45" cy="21.61" r="2.5" fill="#C084FC"/>
+  <line x1="32" y1="30" x2="12.09" y2="14.89" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="12.09" cy="14.89" r="2.5" fill="#FF5C8A"/>
+  <line x1="32" y1="30" x2="17.59" y2="9.57" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="17.59" cy="9.57" r="2.5" fill="#FFB020"/>
+  <line x1="32" y1="30" x2="24.44" y2="6.17" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="24.44" cy="6.17" r="2.5" fill="#10B981"/>
+  <line x1="32" y1="30" x2="32.00" y2="5.00" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="32.00" cy="5.00" r="2.5" fill="#38BDF8"/>
+  <line x1="32" y1="30" x2="39.56" y2="6.17" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="39.56" cy="6.17" r="2.5" fill="#7C5CFF"/>
+  <line x1="32" y1="30" x2="46.41" y2="9.57" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="46.41" cy="9.57" r="2.5" fill="#C084FC"/>
+  <line x1="32" y1="30" x2="51.91" y2="14.89" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="51.91" cy="14.89" r="2.5" fill="#FF5C8A"/>
+  <line x1="32" y1="30" x2="55.55" y2="21.61" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="55.55" cy="21.61" r="2.5" fill="#FFB020"/>
+  <line x1="32" y1="30" x2="56.98" y2="29.13" stroke="#0B0B0B" stroke-width="1.6"/>
+  <circle cx="56.98" cy="29.13" r="2.5" fill="#10B981"/>
+  <line x1="32" y1="30" x2="32" y2="49" stroke="#0B0B0B" stroke-width="1.6"/>
+  <ellipse cx="32" cy="55" rx="3.2" ry="6.5" fill="#256ABF"/>
+  </g></svg>
+</body></html>

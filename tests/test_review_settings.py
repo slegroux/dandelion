@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from pappus import claude_cli, codex_cli
+from dandelion import claude_cli, codex_cli
 
 pytestmark = pytest.mark.real_auth_probes     # exercise the real probes, faked subprocess
 
@@ -122,7 +122,7 @@ def test_codex_status_unknown_on_probe_failure(monkeypatch, exc):
 def _render(monkeypatch, claude, codex):
     from fasthtml.common import to_xml
 
-    from pappus import app
+    from dandelion import app
     monkeypatch.setattr(app.claude_cli, "auth_status", lambda: claude)
     monkeypatch.setattr(app.codex_cli, "auth_status", lambda: codex)
     app._clear_auth_cache()
@@ -176,7 +176,7 @@ def test_settings_escapes_probe_strings(monkeypatch):
 
 
 def test_settings_probes_are_cached(monkeypatch):
-    from pappus import app
+    from dandelion import app
     n = {"claude": 0, "codex": 0}
 
     def claude():
@@ -200,7 +200,7 @@ def test_settings_probes_are_cached(monkeypatch):
 def test_settings_probes_run_concurrently(monkeypatch):
     import threading
 
-    from pappus import app
+    from dandelion import app
     both = threading.Barrier(2, timeout=5)      # only passes if both probes run at once
 
     def probe(result):
@@ -217,7 +217,7 @@ def test_settings_probes_run_concurrently(monkeypatch):
 def test_settings_post_round_trip_saves_default_model(monkeypatch):
     from starlette.testclient import TestClient
 
-    from pappus import app
+    from dandelion import app
     monkeypatch.setattr(app.claude_cli, "auth_status", lambda: MAX)
     monkeypatch.setattr(app.codex_cli, "auth_status", lambda: NO_CODEX)
     monkeypatch.setitem(app.STATE, "model", app.STATE["model"])     # restored after
@@ -233,7 +233,7 @@ def test_settings_post_round_trip_saves_default_model(monkeypatch):
 
 
 def test_default_model_picker_groups_by_billing():
-    from pappus import app
+    from dandelion import app
     assert app._is_subscription_model("claude-opus-high")
     assert app._is_subscription_model("codex-gpt-5.5-high")
     assert not app._is_subscription_model("claude")      # Anthropic API

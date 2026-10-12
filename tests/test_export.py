@@ -1,4 +1,4 @@
-"""Tests for pappus.export — tangling a dialog into an installable package.
+"""Tests for dandelion.export — tangling a dialog into an installable package.
 
 No server, no network: exercises the pure tangle/emit logic and verifies the
 generated package actually imports.
@@ -9,8 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from pappus import export
-from pappus.client import Msg
+from dandelion import export
+from dandelion.client import Msg
 
 
 def _dialog():
@@ -190,7 +190,7 @@ def test_export_package_route_returns_zip():
     import io
     import zipfile
 
-    from pappus import app as appmod
+    from dandelion import app as appmod
 
     backend = appmod.STATE["backend"]
     dialog = appmod.STATE["dialog"]

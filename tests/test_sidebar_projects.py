@@ -5,9 +5,9 @@ import json
 import pytest
 from fasthtml.common import to_xml
 
-import pappus.app as app
-from pappus import groups
-from pappus.client import MockBackend
+import dandelion.app as app
+from dandelion import groups
+from dandelion.client import MockBackend
 
 
 @pytest.fixture(autouse=True)
@@ -194,7 +194,7 @@ def test_concurrent_layout_writes_lose_nothing():
 
 
 def test_new_group_survives_a_restart():
-    from pappus.client import _InMemoryBackend
+    from dandelion.client import _InMemoryBackend
     app.STATE["backend"] = _InMemoryBackend(store_key="kernel")
     name = _body(app.sidebar_new_group("robotics"))["name"]
     assert name in _InMemoryBackend(store_key="kernel").list_dialogs()   # reloaded from disk
