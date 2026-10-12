@@ -84,7 +84,7 @@ def _md_cell(source: str) -> dict:
 
 
 def _outputs(output: str, rich: list, execution_count: int) -> list[dict]:
-    """Map a Pappus cell's results to nbformat output nodes.
+    """Map a Dandelion cell's results to nbformat output nodes.
 
     `output` (stdout/stderr + last-expr repr) becomes a stream; each `rich` item
     (`{"type": mime, "data": ...}` from the kernel — a base64 image, or raw
@@ -151,7 +151,7 @@ def dialog_to_post(msgs: list, title: str, date: str | None = None,
     """Project a dialog's cells into one Quarto post notebook (nbformat v4 dict).
 
     note   → markdown cell (the narrative)
-    code   → code cell, Pappus `#|` directives stripped (library/context noise,
+    code   → code cell, Dandelion `#|` directives stripped (library/context noise,
              not for readers), with its kernel output + plots preserved
     prompt → markdown cell (the AI Q&A rendered as prose)
 
@@ -222,8 +222,8 @@ def blog_files(posts: dict[str, dict], title: str) -> dict[str, str]:
 def default_blog_dir() -> str:
     """The persistent Quarto blog project on disk. A blog is a *project you build
     in place* (like a library or an nbdev project), not a throwaway artifact — so
-    it lives under the same data root as your dialogs (``PAPPUS_DATA``, else
-    ``~/.config/pappus``) and accumulates posts across sessions."""
+    it lives under the same data root as your dialogs (``DANDELION_DATA``, else
+    ``~/.config/dandelion``) and accumulates posts across sessions."""
     from .datadir import data_root
     return str(data_root() / "blog")
 
@@ -279,7 +279,7 @@ def _unique_slug(base: str, taken) -> str:
     return s
 
 
-def publish_dialog(backend, dialog: str, dest: str, title: str = "Pappus",
+def publish_dialog(backend, dialog: str, dest: str, title: str = "Dandelion",
                    date: str | None = None, author: str | None = None) -> dict:
     """Publish ONE dialog as a post, reconciling against prior publishes recorded in
     the blog's manifest (``dialog name → post slug``):
@@ -330,7 +330,7 @@ def publish_dialog(backend, dialog: str, dest: str, title: str = "Pappus",
             "files": sorted(files), "render_ok": render_ok, "render_detail": detail}
 
 
-def build_blog(backend, dialogs: list[str], dest: str, title: str = "Pappus",
+def build_blog(backend, dialogs: list[str], dest: str, title: str = "Dandelion",
                date: str | None = None, author: str | None = None) -> dict:
     """Build a blog at ``dest`` from the named ``dialogs`` (one post each), then
     render it with quarto if installed.

@@ -1,7 +1,7 @@
 """API-key storage for the LLM providers behind each model.
 
 Keys are saved to a JSON file outside the repo (so they're never committed):
-    $PAPPUS_SECRETS  (if set)  else  ~/.config/pappus/secrets.json
+    $DANDELION_SECRETS  (if set)  else  ~/.config/dandelion/secrets.json
 The file is written with 0600 perms. An environment variable always wins over
 the stored file, so CI / shell exports keep working.
 
@@ -29,10 +29,10 @@ SETTINGS_PROVIDERS = {k: PROVIDERS[k] for k in ("claude", "glm")}
 
 
 def secrets_path() -> Path:
-    env = os.environ.get("PAPPUS_SECRETS")
+    env = os.environ.get("DANDELION_SECRETS")
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".config" / "pappus" / "secrets.json"
+    return Path.home() / ".config" / "dandelion" / "secrets.json"
 
 
 def load() -> dict:

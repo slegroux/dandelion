@@ -26,7 +26,7 @@ Input convention is the same as ``play()`` (numpy/torch, mono 1-D or stereo
 spectrogram paths (``spec``/``wavespec`` and ``ab``'s difference view) require
 ``torchaudio``, which ships in the OPTIONAL ``kernel`` extra and is NOT a base
 dependency — they lazy-import it and raise a clear ``ImportError`` with an
-install hint ("pip install 'pappus[kernel]'" / "uv sync --extra
+install hint ("pip install 'dandelion[kernel]'" / "uv sync --extra
 kernel") when it is missing. ``play()`` and ``ab()``'s audio-player half stay
 dependency-light (stdlib ``wave`` + numpy only) and work without ``torchaudio``.
 """
@@ -116,7 +116,7 @@ def play(x, sr: int = 44100) -> _Audio:
 
 _KERNEL_HINT = (
     "This needs torchaudio (the optional 'kernel' extra). Install it with: "
-    "pip install 'pappus[kernel]'  (or: uv sync --extra kernel)."
+    "pip install 'dandelion[kernel]'  (or: uv sync --extra kernel)."
 )
 
 
@@ -279,7 +279,7 @@ def ab(original, recon, sr: int = 44100, **kw):
     except ImportError:
         diff = ('<p style="font:italic 12px sans-serif;color:#888;margin-top:12px;">'
                 "log-mel comparison unavailable: install the kernel extra "
-                "(pip install 'pappus[kernel]') to see the spectrogram diff."
+                "(pip install 'dandelion[kernel]') to see the spectrogram diff."
                 "</p>")
 
     return _ABView(f'<div>{players}{diff}</div>')

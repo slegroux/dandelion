@@ -1,6 +1,6 @@
 """Tangle a dialog into an installable Python package (nbdev-style).
 
-This is the inverse of ``build_context`` in :mod:`pappus.client`: instead of
+This is the inverse of ``build_context`` in :mod:`dandelion.client`: instead of
 serializing a dialog's cells *into* the AI's notebook context, it selects the
 cells a user has marked for export and emits them *as* a pip-installable package.
 

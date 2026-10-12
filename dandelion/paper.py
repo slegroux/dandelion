@@ -22,8 +22,8 @@ from urllib.parse import urlparse
 def _cache_dir() -> Path:
     """Where papers live: uploads, converted markdown, figures, sources.json.
     Local to this machine, under the data root (see datadir), never in the repo.
-    Override with PAPPUS_PAPERS."""
-    override = os.environ.get("PAPPUS_PAPERS")
+    Override with DANDELION_PAPERS."""
+    override = os.environ.get("DANDELION_PAPERS")
     if override:
         return Path(override).expanduser()
     from .datadir import data_root
@@ -35,12 +35,17 @@ def _md_key(pdf: Path) -> str:
         stamp = pdf.stat().st_mtime_ns
     except OSError:
         stamp = 0
-    return hashlib.sha1(f"{pdf.resolve()}:{stamp}".encode()).hexdigest()[:16]
+    return _path_key(str(pdf.resolve()), stamp)
+
+
+def _path_key(path: str, stamp: int) -> str:
+    """Markdown cache key for an upload at absolute `path` with mtime `stamp`."""
+    return hashlib.sha1(f"{path}:{stamp}".encode()).hexdigest()[:16]
 
 
 def migrate_legacy_cache(old: Path | None = None) -> list[str]:
     """One-time move of papers from an old location (default
-    $PAPPUS_DATA/papers; datadir passes the old in-repo dir) into the cache. Idempotent and non-destructive:
+    $DANDELION_DATA/papers; datadir passes the old in-repo dir) into the cache. Idempotent and non-destructive:
     nothing already in the destination is overwritten.
 
     Figures keep their key (imported note cells link to /paper/asset/<key>/…).
@@ -50,7 +55,7 @@ def migrate_legacy_cache(old: Path | None = None) -> list[str]:
     import json
     import shutil
     if old is None:
-        data = os.environ.get("PAPPUS_DATA")
+        data = os.environ.get("DANDELION_DATA")
         if not data:
             return []
         old = Path(data).expanduser() / "papers"
@@ -106,7 +111,7 @@ def migrate_legacy_cache(old: Path | None = None) -> list[str]:
         news = _read_json_dict(nsrc)
         if news is None:                         # unreadable destination: leave it
             return moved                         # and the old index untouched
-        # sources were recorded under whatever PAPPUS_DATA said, possibly via a
+        # sources were recorded under whatever DANDELION_DATA said, possibly via a
         # symlink, so match both the literal and the resolved old location.
         prefixes = {str(old), str(old.resolve())}
         for dialog, rec in (olds or {}).items():
@@ -161,7 +166,7 @@ def _marker_convert(path: str) -> tuple[str, dict]:
     except ImportError as e:
         raise RuntimeError(
             "PDF conversion requires marker — install the `paper` extra: "
-            'uv sync --extra paper  (or: uv pip install "pappus[paper]")'
+            'uv sync --extra paper  (or: uv pip install "dandelion[paper]")'
         ) from e
     if _converter is None:
         _converter = PdfConverter(artifact_dict=create_model_dict())
@@ -319,12 +324,12 @@ def _check_url_allowed(url: str) -> None:
     only to public addresses. Guards the paper importer against SSRF: `file://` and
     other schemes, loopback (127/8, ::1), private ranges (10/8, 172.16/12,
     192.168/16, fc00::/7), and cloud metadata (link-local 169.254/16, fe80::/10) are
-    refused. Set PAPPUS_ALLOW_PRIVATE_URLS=1 to permit private/loopback hosts
+    refused. Set DANDELION_ALLOW_PRIVATE_URLS=1 to permit private/loopback hosts
     (legitimate intranet papers)."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise _BlockedURLError(f"refusing non-http(s) URL scheme: {parsed.scheme or '(none)'}")
-    if os.environ.get("PAPPUS_ALLOW_PRIVATE_URLS") == "1":
+    if os.environ.get("DANDELION_ALLOW_PRIVATE_URLS") == "1":
         return
     host = parsed.hostname
     if not host:
@@ -342,13 +347,13 @@ def _check_url_allowed(url: str) -> None:
 
 def _vet_and_pick_ip(host: str, port: int) -> str:
     """Resolve `host` and return one address to actually connect to. Unless
-    PAPPUS_ALLOW_PRIVATE_URLS=1, the returned IP is guaranteed public — private/
+    DANDELION_ALLOW_PRIVATE_URLS=1, the returned IP is guaranteed public — private/
     loopback/link-local results are skipped, and if none qualify it raises. This
     runs *at socket-connect time* (see the guarded connections below), so the IP we
     vet is the IP we connect to — closing the DNS-rebinding TOCTOU where a name
     passes _check_url_allowed and then re-resolves to 127.0.0.1/169.254.169.254."""
     infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-    if os.environ.get("PAPPUS_ALLOW_PRIVATE_URLS") == "1":
+    if os.environ.get("DANDELION_ALLOW_PRIVATE_URLS") == "1":
         return infos[0][4][0]
     for info in infos:
         ip = info[4][0]
@@ -397,7 +402,7 @@ def _fetch(url: str) -> tuple[bytes, str]:
 
     _check_url_allowed(url)
     opener = urllib.request.build_opener(_GuardedRedirect(), _HTTPHandler(), _HTTPSHandler())
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (pappus)"})
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (dandelion)"})
     with opener.open(req, timeout=25) as r:
         return r.read(), (r.headers.get("Content-Type") or "")
 

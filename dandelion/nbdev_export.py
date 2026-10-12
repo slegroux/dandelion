@@ -1,7 +1,7 @@
 """Project a cell-centric library into an nbdev project.
 
 This is the tree side of `docs/design/graph-vs-tree.md`, the nbdev-delegation
-path: Pappus does not build the library itself, it *projects* the cells tagged
+path: Dandelion does not build the library itself, it *projects* the cells tagged
 to a library into **nbdev-ready notebooks**, and nbdev builds the package + docs.
 
 A library is defined by a per-cell directive that names a library and a module::
@@ -9,11 +9,11 @@ A library is defined by a per-cell directive that names a library and a module::
     #| export <lib>:<module>     this cell belongs to library <lib>, module <module>
     #| export <module>           (no colon) dialog-local, today's behaviour — NOT a library
 
-The `<lib>:<module>` form is Pappus-internal; on emit it is translated to native
+The `<lib>:<module>` form is Dandelion-internal; on emit it is translated to native
 nbdev directives — one notebook per module carrying ``#| default_exp <module>`` at
 the top and a plain ``#| export`` on each cell. Each emitted cell also carries a
 ``# source: <dialog> #<id>`` provenance comment (a plain comment, so it survives
-into the generated ``.py``) that is also a Pappus message-ID link back to the
+into the generated ``.py``) that is also a Dandelion message-ID link back to the
 cell it came from.
 
 The source of truth is always the dialog cells; the notebooks (and the ``.py``
@@ -102,7 +102,7 @@ def _pyproject_toml(pkg: str) -> str:
         "[project]\n"
         f'name = "{pkg}"\n'
         'version = "0.0.1"\n'
-        'description = "Generated from Pappus dialogs."\n'
+        'description = "Generated from Dandelion dialogs."\n'
         'readme = "README.md"\n'
         'requires-python = ">=3.10"\n\n'
         "[tool.nbdev]\n"
@@ -134,7 +134,7 @@ def library_files(backend, lib: str, pkg_name: str | None = None) -> dict[str, s
 
 
 def _index_ipynb(pkg: str) -> str:
-    nb = _notebook([_code_cell(f"#| hide\n# {pkg} — generated from Pappus dialogs.")])
+    nb = _notebook([_code_cell(f"#| hide\n# {pkg} — generated from Dandelion dialogs.")])
     return json.dumps(nb, indent=1) + "\n"
 
 
@@ -240,7 +240,7 @@ def scaffold_nbdev(dest: str, pkg: str, author: str = "", email: str = "",
     *unauthenticated* GitHub API (hardcoded `authenticate=False`, so a token can't
     fix it) and gets rate-limited. `nbdev_create_config` touches no network, so it
     never rate-limits; the tradeoff is the template extras (LICENSE, CI, docs
-    `index.ipynb`, styles) that full `nbdev-new` adds are not generated — Pappus
+    `index.ipynb`, styles) that full `nbdev-new` adds are not generated — Dandelion
     writes the module notebooks + a stub index itself. Run in a subprocess of the
     interpreter that has nbdev; the caller falls back to a minimal pyproject if it
     can't run (nbdev not installed)."""
@@ -251,7 +251,7 @@ def scaffold_nbdev(dest: str, pkg: str, author: str = "", email: str = "",
     os.makedirs(dest, exist_ok=True)
     kw = {"repo": pkg, "user": user or pkg, "author": author or "",
           "author_email": email or "", "path": dest,
-          "description": description or f"{pkg} — generated from Pappus dialogs"}
+          "description": description or f"{pkg} — generated from Dandelion dialogs"}
     script = ("import sys, json\n"
               "from nbdev.config import nbdev_create_config\n"
               "nbdev_create_config(**json.loads(sys.argv[1]))\n")
@@ -291,7 +291,7 @@ def build_library(backend, lib: str, dest: str, pkg_name: str | None = None) -> 
     **offline**, so no GitHub rate limit (unlike ``nbdev-new``); *rebuilds* reuse
     the existing project and just refresh the notebooks. If nbdev isn't installed,
     fall back to a minimal ``pyproject.toml`` — still enough to tangle to ``.py``.
-    Force the minimal path with ``PAPPUS_NBDEV_SCAFFOLD=0``.
+    Force the minimal path with ``DANDELION_NBDEV_SCAFFOLD=0``.
 
     Returns ``{"pkg", "modules", "files", "scaffold", "nbdev_ok", "nbdev_detail"}``.
     """
@@ -303,7 +303,7 @@ def build_library(backend, lib: str, dest: str, pkg_name: str | None = None) -> 
     if is_nbdev_project(dest):
         scaffold = "existing nbdev project (reused)"
     else:
-        want = os.environ.get("PAPPUS_NBDEV_SCAFFOLD", "1") != "0"
+        want = os.environ.get("DANDELION_NBDEV_SCAFFOLD", "1") != "0"
         ok, detail = (scaffold_nbdev(dest, pkg, *_git_identity())
                       if want else (False, "scaffold disabled"))
         if ok:

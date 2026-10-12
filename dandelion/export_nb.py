@@ -3,9 +3,9 @@
 These are pure serializers: they take a list of message objects (duck-typed on
 ``id``/``msg_type``/``content``/``output``/``rich``/``model``) and build
 nbformat/Markdown. They read no application state, so they live outside the UI
-module (``pappus.app``) and can be unit-tested in isolation.
+module (``dandelion.app``) and can be unit-tested in isolation.
 
-This is distinct from :mod:`pappus.export`, which *tangles* a dialog into a
+This is distinct from :mod:`dandelion.export`, which *tangles* a dialog into a
 pip-installable package; here we render the dialog as a document.
 """
 from __future__ import annotations

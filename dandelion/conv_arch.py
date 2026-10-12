@@ -16,7 +16,7 @@ Output formats (both flow through server.kernel_server):
 
 Quick start:
 
-    from pappus.conv_arch import conv_arch, PRESETS, from_torch
+    from dandelion.conv_arch import conv_arch, PRESETS, from_torch
     conv_arch(PRESETS["oobleck"], title="Oobleck VAE")        # a bundled example
     conv_arch([(2, 65536, "in"), (128, 8192, "down"),         # terse tuples
                (2048, 32, "z"), (128, 32768, "up")])

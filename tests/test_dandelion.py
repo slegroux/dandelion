@@ -1,4 +1,4 @@
-"""Runnable test suite for Pappus.
+"""Runnable test suite for Dandelion.
 
 These tests need no SolveIt server and no network — they exercise the real
 project logic (target resolution, model routing, mock fallback, doctor checks,
@@ -15,8 +15,8 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from pappus import targets, doctor, tunnel
-from pappus.client import MockBackend, connect
+from dandelion import targets, doctor, tunnel
+from dandelion.client import MockBackend, connect
 
 
 # ---- targets & models -------------------------------------------------------
@@ -201,7 +201,7 @@ def test_close_tunnel_terminates_cleanly():
 
 # ---- web send route ---------------------------------------------------------
 def test_send_route_adds_message_and_remembers_model():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "test/route"
     app.STATE["backend"].messages("test/route")        # ensure dialog exists
     app.send(content="explain this", msg_type="prompt", model="codex")
@@ -214,7 +214,7 @@ def test_send_route_adds_message_and_remembers_model():
 def test_send_scrolls_to_the_new_cell():
     # /send full-reloads the page (returns Page()), which would jump to the top;
     # it flags the new cell so Stream() scrolls it into view instead.
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "test/scroll"
     bk = app.STATE["backend"]; bk.messages("test/scroll")
@@ -225,7 +225,7 @@ def test_send_scrolls_to_the_new_cell():
 
 
 def test_heading_level_detects_section_headers():
-    import pappus.app as app
+    import dandelion.app as app
     assert app._heading_level("# Title\ntext") == 1
     assert app._heading_level("\n\n### Method\nbody") == 3       # leading blanks ignored
     assert app._heading_level("just prose, no heading") == 0
@@ -235,9 +235,9 @@ def test_heading_level_detects_section_headers():
 
 
 def test_section_header_note_renders_collapse_caret():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    from pappus.client import Msg
+    from dandelion.client import Msg
     h = to_xml(app.MsgRow(Msg(id="_s", msg_type="note", content="## Method\n\ndetails")))
     assert "sec-caret" in h and 'data-sec="_s"' in h and 'data-sec-level="2"' in h
     plain = to_xml(app.MsgRow(Msg(id="_p", msg_type="note", content="just a note")))
@@ -247,7 +247,7 @@ def test_section_header_note_renders_collapse_caret():
 
 
 def test_send_route_ignores_empty():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "test/empty"
     app.STATE["backend"].messages("test/empty")
     before = len(app.STATE["backend"].messages("test/empty"))
@@ -303,24 +303,24 @@ def test_fallback_model_is_cli_not_api():
     # installed so the resilient fallback (Opus high when it's missing) doesn't
     # make this depend on the test machine's PATH.
     from unittest.mock import patch
-    from pappus.client import _fallback_model
-    with patch("pappus.codex_cli.codex_bin", return_value="/bin/codex"):
+    from dandelion.client import _fallback_model
+    with patch("dandelion.codex_cli.codex_bin", return_value="/bin/codex"):
         assert _fallback_model() == "codex-gpt-5.5-high"
 
 
 def test_model_label_resolves_id_to_friendly_name():
     from unittest.mock import patch
-    import pappus.app as app
+    import dandelion.app as app
     assert app._model_label("codex-gpt-5.5-high") == "Codex · GPT-5.5 high"
     assert app._model_label("claude-opus-high") == "Claude · Opus high"
     assert app._model_label("claude") == "Claude API"
-    with patch("pappus.codex_cli.codex_bin", return_value="/bin/codex"):
+    with patch("dandelion.codex_cli.codex_bin", return_value="/bin/codex"):
         assert app._model_label(None) == "Codex · GPT-5.5 high"  # model-less -> default label
     assert app._model_label("nope") == "nope"            # unknown id passes through
 
 
 def test_kernel_prompt_without_model_routes_to_cli_default():
-    from pappus.client import HttpKernelBackend, Msg
+    from dandelion.client import HttpKernelBackend, Msg
     b = HttpKernelBackend.__new__(HttpKernelBackend)     # skip __init__ (no live target)
     b._dialogs, b._undo, b._store_key = {}, [], None
     sent = {}
@@ -332,7 +332,7 @@ def test_kernel_prompt_without_model_routes_to_cli_default():
     b._post, b._save = fake_post, lambda: None
     b._dialogs["d"] = [Msg(id="_x", msg_type="prompt", content="hi", model=None)]
     from unittest.mock import patch
-    with patch("pappus.codex_cli.codex_bin", return_value="/bin/codex"):
+    with patch("dandelion.codex_cli.codex_bin", return_value="/bin/codex"):
         b.exec("d", "_x")                                # codex present -> codex default
     assert sent["path"] == "/prompt"
     assert sent["body"]["model"] == "codex-gpt-5.5-high"  # not a provider API path
@@ -357,7 +357,7 @@ def test_set_type_rejects_unknown_type():
 
 
 def test_cell_type_route_converts_in_place():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "t/route"
     bk = app.STATE["backend"]
     bk.messages("t/route")
@@ -417,7 +417,7 @@ def test_undo_is_lifo_and_empty_is_noop():
 
 
 def test_cell_undo_route_restores_last_delete():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "u/route"
     bk = app.STATE["backend"]
     bk.messages("u/route")
@@ -431,7 +431,7 @@ def test_cell_undo_route_restores_last_delete():
 
 # ---- editable cells: web routes --------------------------------------------
 def test_cell_run_route_saves_edit_and_executes():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/run"
     b = app.STATE["backend"]
     b.messages("cell/run")
@@ -443,7 +443,7 @@ def test_cell_run_route_saves_edit_and_executes():
 
 
 def test_cell_save_route_edits_without_executing():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/save"
     b = app.STATE["backend"]
     b.messages("cell/save")
@@ -456,7 +456,7 @@ def test_cell_save_route_edits_without_executing():
 def test_answer_save_route_edits_answer_without_touching_question():
     """The AI answer is editable in place (SolveIt's 'n'): saving the answer keeps
     the prompt's question and only rewrites its output — no re-ask, no wipe."""
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ans/save"
     b = app.STATE["backend"]
     b.messages("ans/save")
@@ -469,7 +469,7 @@ def test_answer_save_route_edits_answer_without_touching_question():
 
 
 def test_answer_edit_route_returns_editor_with_output():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "ans/edit"
     b = app.STATE["backend"]
@@ -482,7 +482,7 @@ def test_answer_edit_route_returns_editor_with_output():
 
 def test_update_does_not_offer_answer_edit_for_non_prompt():
     """A code/note cell has no AI answer to edit; the answer routes no-op for them."""
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ans/guard"
     b = app.STATE["backend"]
     b.messages("ans/guard")
@@ -493,7 +493,7 @@ def test_update_does_not_offer_answer_edit_for_non_prompt():
 
 
 def test_cell_delete_route_removes_cell():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/del"
     b = app.STATE["backend"]
     b.messages("cell/del")
@@ -546,7 +546,7 @@ class _FakeDlg:
 
 
 def _live_backend_with(fake):
-    from pappus.client import LiveBackend
+    from dandelion.client import LiveBackend
     b = LiveBackend.__new__(LiveBackend)   # bypass __init__: no solveit_client / no network
     b._dlg = lambda dialog: fake
     return b
@@ -576,7 +576,7 @@ def test_live_backend_exec_update_delete_call_real_methods():
 
 
 # ---- notebook context for the AI (kernel backend) --------------------------
-from pappus.client import build_context, Msg, HttpKernelBackend
+from dandelion.client import build_context, Msg, HttpKernelBackend
 
 
 def _m(id, t, content, output="", muted=False):
@@ -635,7 +635,7 @@ def test_kernel_backend_exec_prompt_sends_notebook_context():
 
 
 def test_cell_mute_route_toggles():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/mute"
     b = app.STATE["backend"]
     b.messages("cell/mute")
@@ -647,7 +647,7 @@ def test_cell_mute_route_toggles():
 
 
 # ---- Claude via the `claude` CLI (subscription / Max plan) -----------------
-# The CLI session/command logic lives in pappus.claude_cli; the kernel server
+# The CLI session/command logic lives in dandelion.claude_cli; the kernel server
 # routes Claude CLI models to it. Tests drive the module directly, plus one
 # that asserts run_prompt delegates.
 def _mk_cli_run(capture, result="ok", session_id="sid", returncode=0,
@@ -706,10 +706,10 @@ def _mk_cli_popen(capture, deltas, session_id="sid", is_error=False,
 
 
 def test_claude_cli_fresh_session_sends_full_context(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS.pop("cli/d1", None)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
-    monkeypatch.delenv("PAPPUS_CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.delenv("DANDELION_CLAUDE_CLI_MODEL", raising=False)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-dropped")
     cap = []
     monkeypatch.setattr(cc, "_run_cli", _mk_cli_run(cap, result="a1", session_id="sid-1"))
@@ -731,7 +731,7 @@ def test_claude_cli_fresh_session_sends_full_context(monkeypatch):
 
 
 def test_claude_cli_appended_cells_resume_with_only_the_delta(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS["cli/d2"] = {"id": "sid-9", "sent": "<code>x=1</code>"}
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
     cap = []
@@ -750,7 +750,7 @@ def test_claude_cli_appended_cells_resume_with_only_the_delta(monkeypatch):
 
 
 def test_claude_cli_edit_above_starts_a_fresh_session(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS["cli/d3"] = {"id": "sid-old",
                                  "sent": "<code>x=1</code>\n<code>y=2</code>"}
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
@@ -768,7 +768,7 @@ def test_claude_cli_edit_above_starts_a_fresh_session(monkeypatch):
 
 # ---- AI modes (learning / concise / standard personas) ---------------------
 def test_system_prompt_carries_mode_directive():
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     for mode, needle in (("learning", "MODE — Learning"),
                          ("concise", "MODE — Concise"),
                          ("standard", "MODE — Standard")):
@@ -777,13 +777,13 @@ def test_system_prompt_carries_mode_directive():
 
 
 def test_system_prompt_defaults_to_learning():
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     assert "MODE — Learning" in cc.system("", None)           # unset -> learning
     assert "MODE — Learning" in cc.system("", "bogus")        # unknown -> learning
 
 
 def test_claude_cli_threads_mode_into_system_prompt(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS.pop("cli/mode1", None)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
     cap = []
@@ -796,7 +796,7 @@ def test_claude_cli_threads_mode_into_system_prompt(monkeypatch):
 
 
 def test_mode_change_forces_a_fresh_session(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     # A resumable session (context stays a prefix) but recorded under a different mode.
     cc.CLI_SESSIONS["cli/mode2"] = {"id": "sid-old", "sent": "<code>x=1</code>",
                                     "mode": "learning"}
@@ -812,7 +812,7 @@ def test_mode_change_forces_a_fresh_session(monkeypatch):
 def test_run_prompt_passes_mode_to_api_caller(monkeypatch):
     # Non-CLI (API) models get the mode through run_prompt -> caller -> _system.
     import server.kernel_server as ks
-    import pappus.secrets_store as ss
+    import dandelion.secrets_store as ss
     seen = {}
 
     def fake_caller(key, content, context, mode):
@@ -828,7 +828,7 @@ def test_run_prompt_passes_mode_to_api_caller(monkeypatch):
 
 
 def test_send_route_stores_ai_mode_on_prompt():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "mode/route"
     app.STATE["backend"].messages("mode/route")
     app.send(content="hello?", msg_type="prompt", model="claude-opus-high", ai_mode="concise")
@@ -837,7 +837,7 @@ def test_send_route_stores_ai_mode_on_prompt():
 
 
 def test_mode_select_renders_current_selection():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["ai_mode"] = "standard"
     html = to_xml(app.ModeSelect())
@@ -847,40 +847,40 @@ def test_mode_select_renders_current_selection():
 
 # ---- message-ID links (#_msgid anchors) ------------------------------------
 def test_linkify_same_dialog_msgid():
-    import pappus.app as app
+    import dandelion.app as app
     out = app._linkify_msgids("see #_deadbeef now")
     assert 'class="msglink"' in out and 'data-mid="_deadbeef"' in out
     assert 'href="#cell-_deadbeef"' in out and "xdlg" not in out   # scrolls, no navigation
 
 
 def test_linkify_cross_dialog_msgid():
-    import pappus.app as app
+    import dandelion.app as app
     out = app._linkify_msgids("compare #activation/snake/_abc12345 here")
     assert 'class="msglink xdlg"' in out                            # navigates to the dialog
     assert 'href="/open?dialog=activation/snake#_abc12345"' in out
 
 
 def test_linkify_skips_code_blocks():
-    import pappus.app as app
+    import dandelion.app as app
     out = app._linkify_msgids('<p>#_aaaa1111</p><pre>x = "#_bbbb2222"</pre>')
     assert 'href="#cell-_aaaa1111"' in out                          # prose linked
     assert '<pre>x = "#_bbbb2222"</pre>' in out                     # code left verbatim
 
 
 def test_linkify_skips_existing_href_attributes():
-    import pappus.app as app
+    import dandelion.app as app
     out = app._linkify_msgids('<a href="#_cccc3333">x</a> bare #_dddd4444')
     assert '<a href="#_cccc3333">x</a>' in out                      # attribute untouched
     assert 'data-mid="_dddd4444"' in out                            # bare text linked
 
 
 def test_linkify_noop_without_hash():
-    import pappus.app as app
+    import dandelion.app as app
     assert app._linkify_msgids("plain prose, no anchors") == "plain prose, no anchors"
 
 
 def test_render_md_autolinks_msgid():
-    import pappus.app as app
+    import dandelion.app as app
     if app._md is None:
         import pytest
         pytest.skip("mistune not installed")
@@ -889,14 +889,14 @@ def test_render_md_autolinks_msgid():
 
 def test_markdown_link_to_msgid_is_upgraded():
     # A standard markdown link [label](#_id) becomes a msglink, keeping the label.
-    import pappus.app as app
+    import dandelion.app as app
     out = app._upgrade_msgid_anchors('<a href="#_a321d2a1">the computation</a>')
     assert 'class="msglink"' in out and 'data-mid="_a321d2a1"' in out
     assert ">the computation</a>" in out                    # author's label preserved
 
 
 def test_markdown_link_cross_dialog_is_upgraded():
-    import pappus.app as app
+    import dandelion.app as app
     out = app._upgrade_msgid_anchors('<a href="#folder/dlg/_b2c3d4e5">x</a>')
     assert 'class="msglink xdlg"' in out
     assert 'href="/open?dialog=folder/dlg#_b2c3d4e5"' in out
@@ -904,14 +904,14 @@ def test_markdown_link_cross_dialog_is_upgraded():
 
 def test_upgrade_leaves_ordinary_anchors_alone():
     # External links and heading anchors must NOT be turned into msglinks.
-    import pappus.app as app
+    import dandelion.app as app
     out = app._upgrade_msgid_anchors(
         '<a href="https://example.com">x</a> <a href="#section-title">y</a>')
     assert "msglink" not in out
 
 
 def test_render_md_upgrades_markdown_msgid_link():
-    import pappus.app as app
+    import dandelion.app as app
     if app._md is None:
         import pytest
         pytest.skip("mistune not installed")
@@ -922,32 +922,32 @@ def test_render_md_upgrades_markdown_msgid_link():
 def test_link_button_copies_msgid_anchor():
     # SolveIt's 🔗 "Copy URL anchor" — the button copies the #_msgid string you
     # paste inline to link here, not a full URL.
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    from pappus.client import Msg
+    from dandelion.client import Msg
     html = to_xml(app._link_btn(Msg(id="_ff00ff00", msg_type="code", content="x=1")))
     assert 'data-anchor="#_ff00ff00"' in html
     assert "_copyMsgLink(this)" in html
 
 
 def test_msgrow_includes_link_button():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    from pappus.client import Msg
+    from dandelion.client import Msg
     app.STATE["dialog"] = "d"
     html = to_xml(app.MsgRow(Msg(id="_1234abcd", msg_type="note", content="hi"), num=1))
     assert 'cls="cell-btn link"' in html or 'class="cell-btn link"' in html
 
 
 def test_claude_cli_missing_binary_is_friendly(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     monkeypatch.setattr(cc, "claude_bin", lambda: None)
     out = cc.call("cli/d4", "q", context="")
     assert "claude" in out.lower() and "PATH" in out
 
 
 def test_claude_cli_surfaces_error_output(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS.pop("cli/d5", None)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
     monkeypatch.setattr(cc, "_run_cli", _mk_cli_run([], is_error=True,
@@ -958,9 +958,9 @@ def test_claude_cli_surfaces_error_output(monkeypatch):
 
 
 def test_run_prompt_routes_claude_cli_to_the_module(monkeypatch):
-    # The kernel server delegates Claude CLI models to pappus.claude_cli.
+    # The kernel server delegates Claude CLI models to dandelion.claude_cli.
     import server.kernel_server as ks
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
     monkeypatch.setattr(cc, "_run_cli", _mk_cli_run([], result="routed", session_id="s"))
     assert ks.run_prompt("cli/route", "q", "claude-opus-high", context="c") == "routed"
@@ -984,11 +984,11 @@ def _mk_codex_run(cap, result="answer", session_id="thread-1", returncode=0, std
 
 
 def test_codex_cli_builds_read_only_exec_prompt(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/d", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
 
     cmd = cx._build_cmd("codex/d", "what is x?", context="<code>x=1</code>", mode="concise")
 
@@ -1005,11 +1005,11 @@ def test_codex_cli_builds_read_only_exec_prompt(monkeypatch):
 
 
 def test_codex_cli_selected_model_maps_to_cli_flags(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/d", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
 
     cmd = cx._build_cmd("codex/d", "hi", model="codex-gpt-5.5-xhigh")
 
@@ -1018,12 +1018,12 @@ def test_codex_cli_selected_model_maps_to_cli_flags(monkeypatch):
 
 
 def test_codex_cli_env_model_override_fallback(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/d", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CODEX_CLI_MODEL", "gpt-test")
-    monkeypatch.setenv("PAPPUS_CODEX_CLI_REASONING", "low")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.setenv("DANDELION_CODEX_CLI_MODEL", "gpt-test")
+    monkeypatch.setenv("DANDELION_CODEX_CLI_REASONING", "low")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
 
     cmd = cx._build_cmd("codex/d", "hi", model="custom-codex")
 
@@ -1032,34 +1032,34 @@ def test_codex_cli_env_model_override_fallback(monkeypatch):
 
 
 def test_codex_cli_registers_cell_mcp_tools(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/d", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "1")
-    monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-    monkeypatch.setenv("PAPPUS_MCP_TOKEN", "tok")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "1")
+    monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+    monkeypatch.setenv("DANDELION_MCP_TOKEN", "tok")
 
     cmd = cx._build_cmd("codex/d", "fix cell 1", context="<code>bad()</code>", stream=True)
 
     assert "--json" in cmd
     joined = "\n".join(cmd)
     assert 'mcp_servers.cells.command=' in joined
-    assert 'mcp_servers.cells.env.PAPPUS_DIALOG="codex/d"' in joined
+    assert 'mcp_servers.cells.env.DANDELION_DIALOG="codex/d"' in joined
     assert 'mcp_servers.cells.default_tools_approval_mode="approve"' in joined
     assert "You also have MCP tools to edit this notebook directly" in cmd[-1]
 
 
 def test_codex_cli_resume_edit_previous_cell_reminds_tool_use(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     context = '<code n="1" id="_prev">x = 1</code>'
     cx.CODEX_SESSIONS["codex/edit-prev"] = {
         "id": "thread-9", "sent": context, "mode": None,
         "model": "gpt-5.5", "effort": "high", "tools": True, "version": 1}
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "1")
-    monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-    monkeypatch.setenv("PAPPUS_MCP_TOKEN", "tok")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "1")
+    monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+    monkeypatch.setenv("DANDELION_MCP_TOKEN", "tok")
 
     cmd = cx._build_cmd("codex/edit-prev", "edit the previous cell", context=context)
 
@@ -1070,10 +1070,10 @@ def test_codex_cli_resume_edit_previous_cell_reminds_tool_use(monkeypatch):
 
 def test_codex_cli_call_surfaces_stdout_and_errors(monkeypatch):
     from types import SimpleNamespace
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("d", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     cap = []
 
     def run(cmd, cwd, env, timeout):
@@ -1091,11 +1091,11 @@ def test_codex_cli_call_surfaces_stdout_and_errors(monkeypatch):
 
 
 def test_codex_cli_records_session_after_success(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/s1", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     cap = []
     monkeypatch.setattr(cx, "_run_cli", _mk_codex_run(cap, result="ok", session_id="thread-1"))
 
@@ -1109,13 +1109,13 @@ def test_codex_cli_records_session_after_success(monkeypatch):
 
 
 def test_codex_cli_appended_cells_resume_with_delta(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS["codex/s2"] = {
         "id": "thread-9", "sent": "<code>x=1</code>", "mode": None,
         "model": "gpt-5.5", "effort": "high", "tools": False, "version": 1}
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     cap = []
     monkeypatch.setattr(cx, "_run_cli", _mk_codex_run(cap, result="ok", session_id="thread-9"))
 
@@ -1132,14 +1132,14 @@ def test_codex_cli_appended_cells_resume_with_delta(monkeypatch):
 
 
 def test_codex_cli_edit_above_starts_fresh_session(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS["codex/s3"] = {
         "id": "thread-old", "sent": "<code>x=1</code>\n<code>y=2</code>",
         "mode": None, "model": "gpt-5.5", "effort": "high", "tools": False,
         "version": 1}
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     cap = []
     monkeypatch.setattr(cx, "_run_cli", _mk_codex_run(cap, result="ok", session_id="thread-new"))
 
@@ -1153,13 +1153,13 @@ def test_codex_cli_edit_above_starts_fresh_session(monkeypatch):
 
 
 def test_codex_cli_mode_model_or_tools_change_forces_fresh(monkeypatch):
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS["codex/s4"] = {
         "id": "thread-old", "sent": "<code>x=1</code>", "mode": "learning",
         "model": "gpt-5.5", "effort": "high", "tools": False, "version": 1}
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
-    monkeypatch.delenv("PAPPUS_CODEX_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
+    monkeypatch.delenv("DANDELION_CODEX_CLI_MODEL", raising=False)
 
     cmd = cx._build_cmd("codex/s4", "q", context="<code>x=1</code>\n<code>y=2</code>",
                         mode="standard")
@@ -1171,9 +1171,9 @@ def test_codex_cli_mode_model_or_tools_change_forces_fresh(monkeypatch):
     assert cmd[:2] == ["/usr/bin/codex", "exec"] and "resume" not in cmd
 
     cx.CODEX_SESSIONS["codex/s4"]["effort"] = "xhigh"
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "1")
-    monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-    monkeypatch.setenv("PAPPUS_MCP_TOKEN", "tok")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "1")
+    monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+    monkeypatch.setenv("DANDELION_MCP_TOKEN", "tok")
     cmd = cx._build_cmd("codex/s4", "q", context="<code>x=1</code>\n<code>y=2</code>",
                         mode="standard", model="codex-gpt-5.5-xhigh")
     assert cmd[:2] == ["/usr/bin/codex", "exec"] and "resume" not in cmd
@@ -1181,10 +1181,10 @@ def test_codex_cli_mode_model_or_tools_change_forces_fresh(monkeypatch):
 
 def test_run_prompt_routes_codex_cli_to_the_module(monkeypatch):
     import server.kernel_server as ks
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/route", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     monkeypatch.setattr(cx, "_run_cli",
                         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "routed", "stderr": ""})())
 
@@ -1193,9 +1193,9 @@ def test_run_prompt_routes_codex_cli_to_the_module(monkeypatch):
 
 def test_run_prompt_routes_codex_prefix_models_to_cli(monkeypatch):
     import server.kernel_server as ks
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     monkeypatch.setattr(cx, "_run_cli",
                         lambda *a, **k: type("R", (), {"returncode": 0, "stdout": "routed", "stderr": ""})())
 
@@ -1205,10 +1205,10 @@ def test_run_prompt_routes_codex_prefix_models_to_cli(monkeypatch):
 def test_codex_cli_stream_yields_agent_message_deltas(monkeypatch):
     import json as _json
     from types import SimpleNamespace
-    import pappus.codex_cli as cx
+    import dandelion.codex_cli as cx
     cx.CODEX_SESSIONS.pop("codex/s", None)
     monkeypatch.setattr(cx, "codex_bin", lambda: "/usr/bin/codex")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     cap = []
 
     def popen(cmd, cwd, env):
@@ -1234,7 +1234,7 @@ def test_codex_cli_stream_yields_agent_message_deltas(monkeypatch):
 
 
 def test_claude_cli_stream_yields_deltas_and_records_session(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS.pop("cli/s1", None)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
     cap = []
@@ -1251,7 +1251,7 @@ def test_claude_cli_stream_yields_deltas_and_records_session(monkeypatch):
 
 
 def test_claude_cli_stream_resumes_on_append(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS["cli/s2"] = {"id": "sid-7", "sent": "<code>x=1</code>"}
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
     cap = []
@@ -1264,7 +1264,7 @@ def test_claude_cli_stream_resumes_on_append(monkeypatch):
 
 
 def test_claude_cli_call_accrues_running_cost(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS.pop("cli/c1", None)
     cc.CLI_COST.pop("cli/c1", None)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
@@ -1283,7 +1283,7 @@ def test_claude_cli_call_accrues_running_cost(monkeypatch):
 
 
 def test_claude_cli_stream_accrues_cost_and_skips_errors(monkeypatch):
-    import pappus.claude_cli as cc
+    import dandelion.claude_cli as cc
     cc.CLI_SESSIONS.pop("cli/c2", None)
     cc.CLI_COST.pop("cli/c2", None)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
@@ -1303,9 +1303,9 @@ def test_claude_cli_stream_accrues_cost_and_skips_errors(monkeypatch):
 
 
 def test_ctx_meter_shows_running_cost(monkeypatch):
-    import pappus.app as app
-    import pappus.claude_cli as cc
-    from pappus.client import Msg
+    import dandelion.app as app
+    import dandelion.claude_cli as cc
+    from dandelion.client import Msg
     cc.CLI_COST["cli/m1"] = {"usd": 0.0123, "turns": 3, "input": 900,
                              "output": 1700, "cache_read": 60000, "cache_write": 5000}
     msgs = [Msg(id="_a", msg_type="prompt", content="hi", output="there")]
@@ -1321,7 +1321,7 @@ def test_ctx_meter_shows_running_cost(monkeypatch):
 
 def test_run_prompt_surfaces_context_when_no_key(monkeypatch, tmp_path):
     import server.kernel_server as ks
-    monkeypatch.setenv("PAPPUS_SECRETS", str(tmp_path / "none.json"))
+    monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "none.json"))
     for env in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ZHIPU_API_KEY"):
         monkeypatch.delenv(env, raising=False)
     out = ks.run_prompt("d", "q", "claude", context="<note>hi</note>")
@@ -1432,7 +1432,7 @@ def test_inject_vars_truncates_oversized_value():
 
 def test_resolve_injections_noop_without_eval_backend():
     # Mock backend has no kernel namespace -> $`…` is left literal, never crashes.
-    import pappus.app as app
+    import dandelion.app as app
     b = MockBackend()
     assert app._resolve_injections(b, "d", "keep $`x` literal") == "keep $`x` literal"
 
@@ -1470,7 +1470,7 @@ def test_stream_path_resolves_injection_before_reaching_ai(monkeypatch):
     """End-to-end for the real streaming path: /stream must send the AI the
     *resolved* prompt (kernel values filled in), not the raw $`…` source."""
     import asyncio
-    import pappus.app as app
+    import dandelion.app as app
 
     # A kernel backend whose /eval simulates the server resolving against a live
     # namespace (x -> 42); everything else is the genuine _InMemoryBackend.
@@ -1507,7 +1507,7 @@ def test_kernel_backend_exec_stores_rich_output():
 
 
 def test_rich_view_renders_image_and_html():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     img = to_xml(app._rich_view({"type": "image/png", "data": "XYZ"}))
     assert "<img" in img and "data:image/png;base64,XYZ" in img
@@ -1526,7 +1526,7 @@ def test_run_code_captures_repr_svg_as_rich():
 
 
 def test_rich_view_renders_svg_inline():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     svg = to_xml(app._rich_view({"type": "image/svg+xml", "data": "<svg><rect/></svg>"}))
     assert "cell-svg" in svg and "<svg>" in svg     # inlined, not wrapped in an <img>
@@ -1534,14 +1534,14 @@ def test_rich_view_renders_svg_inline():
 
 def test_conv_arch_emits_inline_svg():
     pytest.importorskip("matplotlib")
-    from pappus.conv_arch import conv_arch, PRESETS
+    from dandelion.conv_arch import conv_arch, PRESETS
     out = conv_arch(PRESETS["oobleck"], title="Oobleck VAE")  # fmt="svg" default
     svg = out._repr_svg_()
     assert svg.startswith("<svg") and "<?xml" not in svg[:20]
 
 
 def test_spatial_label_formats_hxw_and_area():
-    from pappus.conv_arch import _spatial
+    from dandelion.conv_arch import _spatial
     assert _spatial((112, 112)) == (12544, "112×112")   # explicit dims -> readable
     assert _spatial(12544) == (12544, "12,544")          # scalar area -> comma form
     assert _spatial((65536,)) == (65536, "65,536")       # 1-D spatial
@@ -1549,14 +1549,14 @@ def test_spatial_label_formats_hxw_and_area():
 
 def test_conv_arch_renders_hxw_dims_in_svg():
     pytest.importorskip("matplotlib")
-    from pappus.conv_arch import conv_arch, PRESETS
+    from dandelion.conv_arch import conv_arch, PRESETS
     svg = conv_arch(PRESETS["resnet"], title="ResNet-50")._repr_svg_()
     assert "112" in svg and "×" in svg                   # H×W dims reach the label layer
 
 
 # ---- token counting + pinned cells -----------------------------------------
 def test_est_tokens_rough():
-    from pappus.client import est_tokens
+    from dandelion.client import est_tokens
     assert est_tokens("") == 0
     assert est_tokens("a" * 40) == 10                   # ~4 chars/token
 
@@ -1579,7 +1579,7 @@ def test_set_pinned_toggles():
 
 
 def test_cell_pin_route_toggles():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/pin"
     b = app.STATE["backend"]
     b.messages("cell/pin")
@@ -1592,7 +1592,7 @@ def test_cell_pin_route_toggles():
 
 # ---- render-by-default / click-to-edit -------------------------------------
 def test_rendered_cells_are_not_raw_textareas():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     note = to_xml(app.MsgRow(Msg("n", "note", "# Title")))
     code = to_xml(app.MsgRow(Msg("c", "code", "x = 1")))
@@ -1601,7 +1601,7 @@ def test_rendered_cells_are_not_raw_textareas():
 
 
 def test_cell_edit_route_returns_editor_with_cancel():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "edit/route"
     b = app.STATE["backend"]
@@ -1612,7 +1612,7 @@ def test_cell_edit_route_returns_editor_with_cancel():
 
 
 def test_cell_view_route_returns_rendered_cell():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "view/route"
     b = app.STATE["backend"]
@@ -1623,7 +1623,7 @@ def test_cell_view_route_returns_rendered_cell():
 
 
 def test_cell_exec_route_reruns_stored_content():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "exec/route"
     b = app.STATE["backend"]
     b.messages("exec/route")
@@ -1636,14 +1636,14 @@ def test_page_includes_htmx_so_cell_buttons_work():
     # Regression guard: we return a full Html document, so FastHTML does NOT
     # auto-inject its headers — the page must carry htmx itself, or every
     # per-cell hx-post button (Run/Mute/Pin/Delete) renders but does nothing.
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     assert "htmx" in to_xml(app.Page()).lower()
     assert "htmx" in to_xml(app.SettingsPage()).lower()
 
 
 def test_ctx_meter_reports_token_estimate():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     html = to_xml(app._ctx_meter([_m("a", "note", "hello world"), _m("b", "code", "x=1", "1")]))
     assert "AI context" in html and "tokens" in html and "cells in" in html
@@ -1652,7 +1652,7 @@ def test_ctx_meter_reports_token_estimate():
 # ---- secrets store ----------------------------------------------------------
 # ---- streaming AI answers (local CLI + SSE) --------------------------------
 def test_send_prompt_with_claude_cli_defers_to_stream():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "stream/send"
     app.STATE["backend"].messages("stream/send")
     app.STATE["pending_stream"] = None
@@ -1665,7 +1665,7 @@ def test_send_prompt_with_claude_cli_defers_to_stream():
 
 
 def test_send_prompt_with_codex_cli_defers_to_stream():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "stream/codex-send"
     app.STATE["backend"].messages("stream/codex-send")
     app.STATE["pending_stream"] = None
@@ -1678,8 +1678,8 @@ def test_send_prompt_with_codex_cli_defers_to_stream():
 
 
 def test_can_stream_accepts_explicit_local_cli_prefix_models():
-    import pappus.app as app
-    from pappus.client import MockBackend
+    import dandelion.app as app
+    from dandelion.client import MockBackend
 
     assert app._can_stream(MockBackend(), "codex-new-choice")
     assert app._can_stream(MockBackend(), "claude-new-choice")
@@ -1687,7 +1687,7 @@ def test_can_stream_accepts_explicit_local_cli_prefix_models():
 
 
 def test_msgrow_renders_sse_placeholder_for_pending_prompt():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "stream/row"
     b = app.STATE["backend"]
@@ -1701,7 +1701,7 @@ def test_msgrow_renders_sse_placeholder_for_pending_prompt():
 
 def test_stream_route_emits_deltas_and_persists_output(monkeypatch):
     import asyncio
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "stream/route"
     b = app.STATE["backend"]
     b.messages("stream/route")
@@ -1725,7 +1725,7 @@ def test_stream_route_emits_deltas_and_persists_output(monkeypatch):
 
 def test_stream_route_uses_codex_streamer(monkeypatch):
     import asyncio
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "stream/codex-route"
     b = app.STATE["backend"]
     b.messages("stream/codex-route")
@@ -1747,8 +1747,8 @@ def test_stream_route_uses_codex_streamer(monkeypatch):
 
 
 def test_secrets_save_load_and_status(tmp_path, monkeypatch):
-    from pappus import secrets_store
-    monkeypatch.setenv("PAPPUS_SECRETS", str(tmp_path / "s.json"))
+    from dandelion import secrets_store
+    monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "s.json"))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     secrets_store.save("ANTHROPIC_API_KEY", "sk-ant-123456789")
     assert secrets_store.key_for_model("claude") == "sk-ant-123456789"
@@ -1760,8 +1760,8 @@ def test_secrets_save_load_and_status(tmp_path, monkeypatch):
 
 
 def test_secrets_env_overrides_file(tmp_path, monkeypatch):
-    from pappus import secrets_store
-    monkeypatch.setenv("PAPPUS_SECRETS", str(tmp_path / "s.json"))
+    from dandelion import secrets_store
+    monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "s.json"))
     secrets_store.save("OPENAI_API_KEY", "from-file")
     monkeypatch.setenv("OPENAI_API_KEY", "from-env")
     assert secrets_store.get_key("OPENAI_API_KEY") == "from-env"
@@ -1769,9 +1769,9 @@ def test_secrets_env_overrides_file(tmp_path, monkeypatch):
 
 # ---- persistence (in-memory backends save/restore dialogs) ------------------
 def test_persistence_round_trip_survives_backend_rebuild(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus.client import HttpKernelBackend, _store_path
-    from pappus.targets import Target
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion.client import HttpKernelBackend, _store_path
+    from dandelion.targets import Target
     t = Target(name="kernel", url="http://localhost:5055", token="dummy", ssh=None)
     b1 = HttpKernelBackend(t)                       # __init__ is network-free
     m = b1.add("paper/notes", "x = 1", "code")
@@ -1786,16 +1786,16 @@ def test_persistence_round_trip_survives_backend_rebuild(monkeypatch, tmp_path):
 
 
 def test_mock_backend_is_ephemeral(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus.client import MockBackend
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion.client import MockBackend
     MockBackend().add("d/x", "hi", "note")
     assert list(tmp_path.glob("dialogs-*.json")) == []   # nothing written
     assert MockBackend().list_dialogs() == ["demo/welcome"]
 
 
 def test_persistence_preserves_rich_and_flags(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus.client import _save_dialogs, _load_dialogs, Msg
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion.client import _save_dialogs, _load_dialogs, Msg
     _save_dialogs("kernel", {"d": [Msg("m1", "code", "plot()", output="ok",
                                        rich=[{"type": "image/png", "data": "AAAA"}], muted=True)]})
     m = _load_dialogs("kernel")["d"][0]
@@ -1804,8 +1804,8 @@ def test_persistence_preserves_rich_and_flags(monkeypatch, tmp_path):
 
 
 def test_private_dialogs_save_to_gitignored_local_overlay(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus.client import _load_dialogs, _save_dialogs, Msg
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion.client import _load_dialogs, _save_dialogs, Msg
 
     (tmp_path / "dialogs-kernel.private").write_text("paper/private-ap\n")
     _save_dialogs("kernel", {
@@ -1862,7 +1862,7 @@ def test_reorder_moves_cells_and_never_drops():
 
 
 def test_cell_move_route_reorders():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/move"
     b = app.STATE["backend"]
     b.messages("cell/move")
@@ -1894,7 +1894,7 @@ def test_copy_cell_missing_source_returns_none():
 
 
 def test_cell_copy_route_copies_and_flashes():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "cell/copy-src"
     b = app.STATE["backend"]
@@ -1908,7 +1908,7 @@ def test_cell_copy_route_copies_and_flashes():
 
 
 def test_cell_copy_route_ignores_self_target():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "cell/copy-self"
     b = app.STATE["backend"]
@@ -1921,8 +1921,8 @@ def test_cell_copy_route_ignores_self_target():
 
 # ---- export (.ipynb / .md) --------------------------------------------------
 def test_export_ipynb_structure():
-    import json, pappus.app as app
-    from pappus.client import Msg
+    import json, dandelion.app as app
+    from dandelion.client import Msg
     msgs = [Msg("n", "note", "# Title"),
             Msg("c", "code", "print(1)", output="1", rich=[{"type": "image/png", "data": "AAAA"}]),
             Msg("p", "prompt", "what?", output="because", model="codex")]
@@ -1940,8 +1940,8 @@ def test_export_ipynb_structure():
 
 
 def test_export_markdown():
-    import pappus.app as app
-    from pappus.client import Msg
+    import dandelion.app as app
+    from dandelion.client import Msg
     md = app.to_markdown([
         Msg("n", "note", "## Hi"),
         Msg("c", "code", "x=1", output="ok", rich=[{"type": "image/png", "data": "BBBB"}]),
@@ -1954,7 +1954,7 @@ def test_export_markdown():
 
 
 def test_export_routes_set_download_headers():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "paper/x"
     b = app.STATE["backend"]
     b.messages("paper/x")
@@ -1968,8 +1968,8 @@ def test_export_routes_set_download_headers():
 # ---- paper reading (PDF -> markdown) ----------------------------------------
 def test_paper_convert_requires_marker_but_cache_survives_it(monkeypatch, tmp_path):
     import pytest
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     pdf = tmp_path / "x.pdf"; pdf.write_bytes(b"%PDF-1.4 fake")
 
     def no_marker(p):
@@ -1987,14 +1987,14 @@ def test_paper_convert_requires_marker_but_cache_survives_it(monkeypatch, tmp_pa
 
 
 def test_split_sections_accepts_precomputed_blocks():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     md = "# A\n\na1\n\n## B\n\nb1\n\nb2\n\n# C\n\nc1"
     blocks = pl.split_blocks(md)
     assert pl.split_sections(md, blocks=blocks) == pl.split_sections(md)
 
 
 def test_paper_split_is_memoized_on_state(monkeypatch):
-    import pappus.app as app
+    import dandelion.app as app
     calls = {"blocks": 0, "sections": 0}
     real_b, real_s = app.paperlib.split_blocks, app.paperlib.split_sections
     monkeypatch.setattr(app.paperlib, "split_blocks",
@@ -2013,8 +2013,8 @@ def test_paper_split_is_memoized_on_state(monkeypatch):
 def test_paper_empty_conversion_is_not_cached(monkeypatch, tmp_path):
     # An empty extraction (image-only/scanned PDF) must NOT be cached, or the paper
     # would be blank forever (cache key is path+mtime; uploads are content-deduped).
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     pdf = tmp_path / "scan.pdf"; pdf.write_bytes(b"%PDF-1.4 fake")
     monkeypatch.setattr(pl, "_marker_convert", lambda p: ("   ", {}))   # nothing extracted
     md, engine = pl.convert(str(pdf))
@@ -2025,7 +2025,7 @@ def test_paper_empty_conversion_is_not_cached(monkeypatch, tmp_path):
 
 
 def test_arxiv_url_rewrites_to_pdf():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     assert pl._arxiv_pdf("https://arxiv.org/abs/2305.18247") == "https://arxiv.org/pdf/2305.18247"
     assert pl._arxiv_pdf("https://arxiv.org/abs/2305.18247v2") == "https://arxiv.org/pdf/2305.18247v2"
     assert pl._arxiv_pdf("https://arxiv.org/pdf/2305.18247.pdf") == "https://arxiv.org/pdf/2305.18247"
@@ -2033,7 +2033,7 @@ def test_arxiv_url_rewrites_to_pdf():
 
 
 def test_normalize_url_adds_scheme_to_bare_hosts():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     # A bare host (what users actually paste) gets https:// — this is the whole
     # reason the URL box works without typing the scheme.
     assert pl.normalize_url("arxiv.org/abs/1706.03762") == "https://arxiv.org/abs/1706.03762"
@@ -2050,8 +2050,8 @@ def test_normalize_url_adds_scheme_to_bare_hosts():
 def test_convert_url_normalizes_bare_host(monkeypatch, tmp_path):
     # A scheme-less URL must reach _fetch as https://… (previously it was refused
     # by the SSRF guard as scheme "(none)").
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     seen = {}
     monkeypatch.setattr(pl, "_fetch",
                         lambda u: (seen.setdefault("url", u), (b"<h1>Hi</h1>", "text/html"))[1])
@@ -2062,7 +2062,7 @@ def test_convert_url_normalizes_bare_host(monkeypatch, tmp_path):
 
 
 def test_fetch_guard_rejects_nonhttp_and_private_hosts(monkeypatch):
-    from pappus import paper as pl
+    from dandelion import paper as pl
     import pytest as _pt
     # non-http(s) scheme (file:// local-file read) — refused before any I/O
     with _pt.raises(pl._BlockedURLError):
@@ -2078,19 +2078,19 @@ def test_fetch_guard_rejects_nonhttp_and_private_hosts(monkeypatch):
 
 
 def test_fetch_guard_allows_public_host_and_honors_escape_hatch(monkeypatch):
-    from pappus import paper as pl
+    from dandelion import paper as pl
     # a host that resolves to a public IP passes (getaddrinfo mocked — no live network)
     monkeypatch.setattr(pl.socket, "getaddrinfo",
                         lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
     pl._check_url_allowed("https://example.com/paper.pdf")          # does not raise
     # the escape hatch permits private hosts (legitimate intranet papers)
-    monkeypatch.setenv("PAPPUS_ALLOW_PRIVATE_URLS", "1")
+    monkeypatch.setenv("DANDELION_ALLOW_PRIVATE_URLS", "1")
     pl._check_url_allowed("http://127.0.0.1/intranet")              # allowed now
 
 
 def test_convert_url_html_is_article_extracted_and_cached(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     monkeypatch.setattr(pl, "_fetch", lambda u: (b"<html><body><h1>Post</h1></body></html>", "text/html"))
     monkeypatch.setattr(pl, "_extract_article", lambda html, url: ("# Post\n\nbody", "trafilatura"))
     md, engine = pl.convert_url("https://blog.example.com/post")
@@ -2103,8 +2103,8 @@ def test_convert_url_html_is_article_extracted_and_cached(monkeypatch, tmp_path)
 def test_convert_url_pdf_routes_to_pdf_pipeline(monkeypatch, tmp_path):
     # An arXiv (or any application/pdf) URL must go through the PDF pipeline, not
     # HTML article extraction — so equations/tables survive.
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     seen = {}
     monkeypatch.setattr(pl, "_fetch", lambda u: (seen.setdefault("url", u), (b"%PDF-1.4 ...", "application/pdf"))[1])
     monkeypatch.setattr(pl, "convert", lambda path: ("# Paper\n\n$E=mc^2$", "marker"))
@@ -2114,8 +2114,8 @@ def test_convert_url_pdf_routes_to_pdf_pipeline(monkeypatch, tmp_path):
 
 
 def test_convert_url_empty_not_cached(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     monkeypatch.setattr(pl, "_fetch", lambda u: (b"<html></html>", "text/html"))
     monkeypatch.setattr(pl, "_extract_article", lambda html, url: ("   ", "bs4"))
     pl.convert_url("https://empty.example.com")
@@ -2123,7 +2123,7 @@ def test_convert_url_empty_not_cached(monkeypatch, tmp_path):
 
 
 def test_url_name_is_readable():
-    import pappus.app as app
+    import dandelion.app as app
     assert app._url_name("https://www.fast.ai/posts/2025-11-07-solveit.html") == "2025-11-07-solveit"
     assert app._url_name("https://arxiv.org/abs/2305.18247") == "2305.18247"   # arXiv id intact
     assert app._url_name("https://example.com/paper.pdf") == "paper"
@@ -2132,7 +2132,7 @@ def test_url_name_is_readable():
 
 
 def test_paper_open_route_accepts_url(monkeypatch):
-    import time, pappus.app as app
+    import time, dandelion.app as app
     app.STATE["paper"] = None
     monkeypatch.setattr(app.paperlib, "convert_url", lambda u: ("# Web\n\npara", "trafilatura"))
     app.paper_open(url="https://blog.example.com/great-post")
@@ -2146,8 +2146,8 @@ def test_paper_open_route_accepts_url(monkeypatch):
 
 
 def test_paper_uses_marker_when_available(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
     pdf = tmp_path / "y.pdf"; pdf.write_bytes(b"%PDF-1.4 fake")
     monkeypatch.setattr(pl, "_marker_convert", lambda p: (r"$$E=mc^2$$", {}))
     md, engine = pl.convert(str(pdf))
@@ -2155,8 +2155,8 @@ def test_paper_uses_marker_when_available(monkeypatch, tmp_path):
 
 
 def test_paper_convert_saves_marker_figures_and_rewrites_refs(monkeypatch, tmp_path):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import paper as pl
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import paper as pl
 
     class FakeImg:
         def save(self, dst): Path(dst).write_bytes(b"jpegdata")
@@ -2176,7 +2176,7 @@ def test_paper_convert_saves_marker_figures_and_rewrites_refs(monkeypatch, tmp_p
 
 
 def test_split_blocks_keeps_live_figures_drops_dead_refs():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     md = ("intro\n\n![](_page_1_Figure_0.jpeg)\n\n"
           "![f](/paper/asset/abc/_page_1_Figure_0.jpeg)\n\n"
           "![r](https://x.test/fig.png)\n\nend")
@@ -2187,9 +2187,9 @@ def test_split_blocks_keeps_live_figures_drops_dead_refs():
 
 
 def test_paper_asset_route_serves_and_guards(monkeypatch, tmp_path):
-    import pappus.app as app
+    import dandelion.app as app
     from starlette.testclient import TestClient
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
     adir = tmp_path / "papers" / "assets" / "k1"
     adir.mkdir(parents=True)
     (adir / "fig.jpeg").write_bytes(b"imgbytes")
@@ -2202,7 +2202,7 @@ def test_paper_asset_route_serves_and_guards(monkeypatch, tmp_path):
 
 
 def test_paper_panel_states():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["paper"] = None
     assert 'id="paperPanel"' in to_xml(app.PaperPanel())
@@ -2219,7 +2219,7 @@ def test_paper_panel_states():
 
 
 def test_paper_step_brings_one_section_at_a_time():
-    import pappus.app as app
+    import dandelion.app as app
     md = "# A\n\nalpha body\n\n# B\n\nbeta body"     # split_sections -> 2 sections
     app.STATE["paper"] = {"name": "x.pdf", "status": "ready", "md": md, "engine": "marker"}
 
@@ -2246,7 +2246,7 @@ def test_paper_step_brings_one_section_at_a_time():
 
 
 def test_paper_import_selection_adds_note_and_code():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["paper"] = {"name": "sel.pdf", "status": "ready", "md": "# whole\n\nbig paper",
                           "engine": "marker"}
     app.paper_import_selection(text="  just this bit I care about  ")
@@ -2262,7 +2262,7 @@ def test_paper_import_selection_adds_note_and_code():
 
 
 def test_cell_export_route_toggles_directive_and_keeps_output():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/exp"
     b = app.STATE["backend"]; b.messages("cell/exp")
     m = b.add("cell/exp", "def f(): return 1", "code"); m.output = "ran"
@@ -2275,7 +2275,7 @@ def test_cell_export_route_toggles_directive_and_keeps_output():
 
 
 def test_cell_export_route_ignores_non_code():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "cell/exp2"
     b = app.STATE["backend"]; b.messages("cell/exp2")
     m = b.add("cell/exp2", "# just a note", "note")
@@ -2284,7 +2284,7 @@ def test_cell_export_route_ignores_non_code():
 
 
 def test_paper_step_noop_when_not_ready_or_empty():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["paper"] = {"name": "x.pdf", "status": "converting"}
     app.paper_step()
     assert "dialog" not in app.STATE["paper"]            # nothing imported while converting
@@ -2295,9 +2295,9 @@ def test_paper_step_noop_when_not_ready_or_empty():
 
 
 def test_paper_toggle_only_shows_when_a_paper_is_loaded(monkeypatch, tmp_path):
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))         # empty → no recorded sources
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))         # empty → no recorded sources
     app.STATE["paper"] = None
     app.STATE["dialog"] = "plain/no-source"
     assert 'id="tgl-paper"' not in to_xml(app.Page())          # no paper, no source -> no 📖
@@ -2313,7 +2313,7 @@ def test_paper_toggle_only_shows_when_a_paper_is_loaded(monkeypatch, tmp_path):
 
 
 def test_dialog_tree_nests_and_drops_empty_segments():
-    import pappus.app as app
+    import dandelion.app as app
     t = app._dialog_tree(["a/b", "a/c", "top"])
     assert sorted(t["folders"]) == ["a"]
     assert [lab for lab, _ in t["folders"]["a"]["leaves"]] == ["b", "c"]
@@ -2337,7 +2337,7 @@ def test_delete_dialog_removes_it():
 
 
 def test_dialog_delete_route_switches_active_then_falls_back():
-    import pappus.app as app
+    import dandelion.app as app
     bk = app.STATE["backend"]
     a = "del/a"; c = "del/b"
     bk.messages(a); bk.add(a, "1", "code")
@@ -2354,7 +2354,7 @@ def test_dialog_delete_route_switches_active_then_falls_back():
 
 
 def test_dialog_delete_bulk_removes_several():
-    import json, pappus.app as app
+    import json, dandelion.app as app
     bk = app.STATE["backend"]
     for d in ("bulk/a", "bulk/b", "bulk/c"):
         bk.messages(d); bk.add(d, "x", "code")
@@ -2368,7 +2368,7 @@ def test_dialog_delete_bulk_removes_several():
 
 
 def test_sidebar_renders_delete_menu():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     h = to_xml(app._dialog_leaf("welcome", "demo/welcome", "demo/welcome"))
     assert "conv-del" in h and "Delete" in h                  # the ⋯ delete action
@@ -2376,13 +2376,13 @@ def test_sidebar_renders_delete_menu():
 
 
 def test_paper_panel_shows_stepper_progress():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     md = "# A\n\na\n\n# B\n\nb\n\n# C\n\nc"            # 3 sections
     app.STATE["paper"] = {"name": "p.pdf", "status": "ready", "md": md, "engine": "marker", "step": 1}
     h = to_xml(app.PaperPanel())
     assert "/paper/step" in h and "Next section" in h and "1/3" in h
-    assert "paper-collapsed" in h and "pappus_paperhidden" in h   # show/hide text toggle
+    assert "paper-collapsed" in h and "dandelion_paperhidden" in h   # show/hide text toggle
     app.STATE["paper"]["step"] = 3                    # all consumed
     h = to_xml(app.PaperPanel())
     assert "All 3 sections imported" in h and "/paper/step" not in h
@@ -2390,9 +2390,9 @@ def test_paper_panel_shows_stepper_progress():
 
 
 def test_paper_open_and_close_routes(monkeypatch, tmp_path):
-    import time, pappus.app as app
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    monkeypatch.setenv("PAPPUS_PAPER_DIR", str(tmp_path))   # allow the tmp path (S5)
+    import time, dandelion.app as app
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    monkeypatch.setenv("DANDELION_PAPER_DIR", str(tmp_path))   # allow the tmp path (S5)
     monkeypatch.setattr(app.paperlib, "convert", lambda p: ("# Paper", "marker"))
     pdf = tmp_path / "a.pdf"; pdf.write_bytes(b"%PDF-1.4 fake")   # must exist now
     app.paper_open(path=str(pdf))
@@ -2406,9 +2406,9 @@ def test_paper_open_and_close_routes(monkeypatch, tmp_path):
 
 
 def test_paper_open_accepts_upload(monkeypatch, tmp_path):
-    import time, pappus.app as app
+    import time, dandelion.app as app
     from starlette.testclient import TestClient
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
     monkeypatch.setattr(app.paperlib, "convert", lambda p: ("# Uploaded", "marker"))
     app.STATE["paper"] = None
     c = TestClient(app.app)
@@ -2424,8 +2424,8 @@ def test_paper_open_accepts_upload(monkeypatch, tmp_path):
 def test_reupload_keeps_file_so_markdown_cache_hits(monkeypatch, tmp_path):
     # The same PDF re-uploaded must reuse its conversion: identical content lands
     # at the same path AND isn't rewritten, so the path+mtime cache key is stable.
-    import io, pappus.app as app
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
+    import io, dandelion.app as app
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
 
     class FakeUpload:
         def __init__(self, data): self.filename, self.file = "p.pdf", io.BytesIO(data)
@@ -2442,8 +2442,8 @@ def test_reupload_keeps_file_so_markdown_cache_hits(monkeypatch, tmp_path):
 
 
 def test_paper_open_bad_path_reports_not_found(monkeypatch, tmp_path):
-    import pappus.app as app
-    monkeypatch.setenv("PAPPUS_PAPER_DIR", str(tmp_path))   # allow the dir so we
+    import dandelion.app as app
+    monkeypatch.setenv("DANDELION_PAPER_DIR", str(tmp_path))   # allow the dir so we
     app.paper_open(path=str(tmp_path / "nope.pdf"))          # reach the not-found path
     assert app.STATE["paper"]["engine"] == "error" and "not found" in app.STATE["paper"]["md"].lower()
     app.STATE["paper"] = None
@@ -2452,7 +2452,7 @@ def test_paper_open_bad_path_reports_not_found(monkeypatch, tmp_path):
 def test_source_form_has_local_path_field():
     # The 📄 menu offers three ways to open a source: upload, URL, and a local
     # file path (opened in place). Guard the path field against silent removal.
-    import pappus.app as app
+    import dandelion.app as app
     from starlette.testclient import TestClient
     html = TestClient(app.app).get("/").text
     assert 'name="path"' in html and "Open file" in html
@@ -2463,7 +2463,7 @@ def test_pdf_picker_button_triggers_hidden_input():
     # "Choose a PDF…" must be a button that explicitly clicks the hidden file
     # input — a nested-label + display:none input fails to open the native picker
     # in some browsers, so the explicit .click() is the fix. Guard it.
-    import pappus.app as app
+    import dandelion.app as app
     from starlette.testclient import TestClient
     html = TestClient(app.app).get("/").text
     assert 'id="pdfPick"' in html                       # the hidden file input
@@ -2472,10 +2472,10 @@ def test_pdf_picker_button_triggers_hidden_input():
 
 
 def test_paper_open_refuses_path_outside_allowed_dir(monkeypatch, tmp_path):
-    # S5: a server-side `path` outside home/cache/$PAPPUS_PAPER_DIR is refused,
+    # S5: a server-side `path` outside home/cache/$DANDELION_PAPER_DIR is refused,
     # not opened — even when the file exists.
-    import pappus.app as app
-    monkeypatch.setenv("PAPPUS_PAPER_DIR", str(tmp_path / "allowed"))
+    import dandelion.app as app
+    monkeypatch.setenv("DANDELION_PAPER_DIR", str(tmp_path / "allowed"))
     outside = tmp_path / "secret.pdf"; outside.write_bytes(b"%PDF-1.4 secret")
     app.paper_open(path=str(outside))
     assert app.STATE["paper"]["engine"] == "error"
@@ -2485,7 +2485,7 @@ def test_paper_open_refuses_path_outside_allowed_dir(monkeypatch, tmp_path):
 
 # ---- import paper into notebook (one note cell per paragraph) ---------------
 def test_split_blocks_paragraphs_and_fences():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     md = "# Title\n\nFirst para.\n\nSecond para\nwraps two lines.\n\n```python\na = 1\n\nb = 2\n```\n\n![](fig.png)"
     blocks = pl.split_blocks(md)
     assert blocks[0] == "# Title"
@@ -2496,7 +2496,7 @@ def test_split_blocks_paragraphs_and_fences():
 
 
 def test_paper_import_creates_one_note_per_block(monkeypatch):
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["paper"] = {"name": "attention.pdf", "status": "ready",
                           "md": "# Attention\n\nThe transformer.\n\n## Heads\n\nMulti-head."}
     app.paper_import()
@@ -2510,9 +2510,9 @@ def test_paper_import_creates_one_note_per_block(monkeypatch):
 
 
 def test_paper_bulk_import_close_then_reopen(monkeypatch, tmp_path):
-    import time, pappus.app as app
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    monkeypatch.setenv("PAPPUS_PAPER_DIR", str(tmp_path))   # path allowed for reopen
+    import time, dandelion.app as app
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    monkeypatch.setenv("DANDELION_PAPER_DIR", str(tmp_path))   # path allowed for reopen
     monkeypatch.setattr(app.paperlib, "convert", lambda p: ("# Reopened", "marker"))
     pdf = tmp_path / "att.pdf"; pdf.write_bytes(b"%PDF-1.4 fake")
     app.STATE["paper"] = {"name": "att.pdf", "status": "ready", "md": "# A\n\nx",
@@ -2534,8 +2534,8 @@ def test_paper_bulk_import_close_then_reopen(monkeypatch, tmp_path):
 
 
 def test_paper_reopen_noop_without_recorded_source(monkeypatch, tmp_path):
-    import pappus.app as app
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))       # fresh dir → no sources.json
+    import dandelion.app as app
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))       # fresh dir → no sources.json
     app.STATE["paper"] = None
     app.STATE["dialog"] = "plain/no-paper"
     app.paper_reopen()
@@ -2543,7 +2543,7 @@ def test_paper_reopen_noop_without_recorded_source(monkeypatch, tmp_path):
 
 
 def test_paper_import_dialog_named_after_paper_title():
-    import pappus.app as app
+    import dandelion.app as app
     # an arXiv-style source: the *name* is the id, the *title* is the first heading
     app.STATE["paper"] = {"name": "1706.03762.pdf", "status": "ready",
                           "md": "# Attention Is All *You* Need\n\nThe transformer."}
@@ -2559,14 +2559,14 @@ def test_paper_import_dialog_named_after_paper_title():
 
 
 def test_paper_import_unique_dialog_name():
-    import pappus.app as app
+    import dandelion.app as app
     b = app.STATE["backend"]
     b.messages("paper/dup")                                      # pre-existing
     assert app._unique_dialog(b, "paper/dup").startswith("paper/dup-")
 
 
 def test_clean_md_strips_marker_html_noise():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     dirty = ('# Title <span id="page-2-0"></span>\n\nAuthor<sup>*</sup> and X<sub>i</sub>\n\n'
              r"recurrent [\[7\]](#page-10-1) nets and [link](#page-3-0).")
     clean = pl._clean_md(dirty)
@@ -2581,7 +2581,7 @@ def test_clean_md_backslash_heavy_text_no_exponential_backtracking():
     exponentially: 24 pairs took ~4.5 s with the old pattern, doubling per pair,
     so 26 pairs (~18 s) fails the bound instead of hanging the suite."""
     import time
-    from pappus import paper as pl
+    from dandelion import paper as pl
     md = "[" + "\\a" * 26 + " no closing bracket"
     t = time.perf_counter()
     assert pl._clean_md(md) == md
@@ -2601,7 +2601,7 @@ def test_insert_below_and_above_anchor():
 
 
 def test_cell_insert_route_inserts_and_opens_editor():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "ins/route"
     bk = app.STATE["backend"]
@@ -2624,7 +2624,7 @@ def test_inserted_prompt_cell_focuses_start_without_focus_scroll():
     # An inserted Ask-AI (prompt) cell opens in edit mode with the caret at the
     # beginning; focus must NOT scroll (it would race scroll_to's scrollIntoView
     # and land the cell inconsistently) — scroll_to owns positioning.
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "ins/prompt"
     bk = app.STATE["backend"]
@@ -2640,7 +2640,7 @@ def test_inserted_prompt_cell_focuses_start_without_focus_scroll():
 
 
 def test_split_sections_groups_under_headings():
-    from pappus import paper as pl
+    from dandelion import paper as pl
     md = "intro line\n\n# A\n\npara a1\n\npara a2\n\n## B\n\npara b1"
     secs = pl.split_sections(md)
     assert len(secs) == 3                                # intro, A(+content), B(+content)
@@ -2650,7 +2650,7 @@ def test_split_sections_groups_under_headings():
 
 
 def test_paper_import_section_mode_fewer_cells_than_para():
-    import pappus.app as app
+    import dandelion.app as app
     md = "# Title\n\np1\n\np2\n\n## Sub\n\np3\n\np4"
     app.STATE["paper"] = {"name": "x.pdf", "status": "ready", "md": md}
     app.paper_import(mode="section")
@@ -2663,7 +2663,7 @@ def test_paper_import_section_mode_fewer_cells_than_para():
 
 
 def test_cell_insert_route_above_and_below_with_type():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ins/ab"
     bk = app.STATE["backend"]
     bk.messages("ins/ab")
@@ -2678,7 +2678,7 @@ def test_cell_insert_route_above_and_below_with_type():
 
 def test_cell_insert_without_type_inherits_anchor_type():
     """a/b send no msg_type, so a new cell matches the one it's anchored to."""
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ins/inherit"
     bk = app.STATE["backend"]
     bk.messages("ins/inherit")
@@ -2693,7 +2693,7 @@ def test_cell_insert_without_type_inherits_anchor_type():
 
 
 def test_cell_insert_without_type_falls_back_to_code_for_unknown_anchor():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ins/noanchor"
     bk = app.STATE["backend"]
     bk.messages("ins/noanchor")
@@ -2703,7 +2703,7 @@ def test_cell_insert_without_type_falls_back_to_code_for_unknown_anchor():
 
 def test_cell_insert_menu_type_still_wins_over_anchor():
     """The ＋ menu names a type explicitly; inheritance must not override it."""
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ins/explicit"
     bk = app.STATE["backend"]
     bk.messages("ins/explicit")
@@ -2713,7 +2713,7 @@ def test_cell_insert_menu_type_still_wins_over_anchor():
 
 
 def test_cell_insert_route_rejects_bad_type():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ins/bad"
     bk = app.STATE["backend"]
     bk.messages("ins/bad")
@@ -2724,25 +2724,25 @@ def test_cell_insert_route_rejects_bad_type():
 
 # ---- AI cell-editing MCP tools (claude -p / Max path) -----------------------
 def test_cell_tools_disabled_without_env(monkeypatch):
-    from pappus import claude_cli as cc
-    monkeypatch.delenv("PAPPUS_MCP_TOKEN", raising=False)
-    monkeypatch.delenv("PAPPUS_APP_URL", raising=False)
+    from dandelion import claude_cli as cc
+    monkeypatch.delenv("DANDELION_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("DANDELION_APP_URL", raising=False)
     assert cc._cell_tools_enabled() is False
 
 
 def test_cell_tools_env_flag_opt_out(monkeypatch):
-    from pappus import claude_cli as cc
-    monkeypatch.setenv("PAPPUS_MCP_TOKEN", "t")
-    monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-    monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+    from dandelion import claude_cli as cc
+    monkeypatch.setenv("DANDELION_MCP_TOKEN", "t")
+    monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+    monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
     assert cc._cell_tools_enabled() is False
 
 
 def test_build_cmd_registers_mcp_and_keeps_prompt_last(monkeypatch):
-    from pappus import claude_cli as cc
-    monkeypatch.setenv("PAPPUS_MCP_TOKEN", "t")
-    monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-    monkeypatch.delenv("PAPPUS_CELL_TOOLS", raising=False)
+    from dandelion import claude_cli as cc
+    monkeypatch.setenv("DANDELION_MCP_TOKEN", "t")
+    monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+    monkeypatch.delenv("DANDELION_CELL_TOOLS", raising=False)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
     cc.CLI_SESSIONS.pop("mcp/x", None)                     # force a fresh session
     cmd, _ = cc._build_cmd("mcp/x", "fix cell 2", "ctx", stream=True)
@@ -2756,7 +2756,7 @@ def test_build_cmd_registers_mcp_and_keeps_prompt_last(monkeypatch):
 
 
 def test_tools_guidance_resolves_previous_cell():
-    from pappus import claude_cli as cc
+    from dandelion import claude_cli as cc
     assert "previous cell" in cc._TOOLS_GUIDANCE
     assert "immediately preceding context cell" in cc._TOOLS_GUIDANCE
     assert "actually call update_cell" in cc._TOOLS_GUIDANCE
@@ -2765,15 +2765,15 @@ def test_tools_guidance_resolves_previous_cell():
 
 
 def test_build_cmd_resume_edit_previous_cell_reminds_tool_use(monkeypatch):
-    from pappus import claude_cli as cc
+    from dandelion import claude_cli as cc
     context = '<code n="1" id="_prev">x = 1</code>'
     cc.CLI_SESSIONS["mcp/edit-prev"] = {
         "id": "sid-9", "sent": context, "mode": None,
         "model": None, "effort": None}
-    monkeypatch.setenv("PAPPUS_MCP_TOKEN", "t")
-    monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-    monkeypatch.delenv("PAPPUS_CELL_TOOLS", raising=False)
-    monkeypatch.delenv("PAPPUS_CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.setenv("DANDELION_MCP_TOKEN", "t")
+    monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+    monkeypatch.delenv("DANDELION_CELL_TOOLS", raising=False)
+    monkeypatch.delenv("DANDELION_CLAUDE_CLI_MODEL", raising=False)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
 
     cmd, _ = cc._build_cmd("mcp/edit-prev", "edit the previous cell", context, stream=True)
@@ -2785,8 +2785,8 @@ def test_build_cmd_resume_edit_previous_cell_reminds_tool_use(monkeypatch):
 
 
 def test_build_cmd_no_mcp_when_disabled(monkeypatch):
-    from pappus import claude_cli as cc
-    monkeypatch.delenv("PAPPUS_MCP_TOKEN", raising=False)
+    from dandelion import claude_cli as cc
+    monkeypatch.delenv("DANDELION_MCP_TOKEN", raising=False)
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
     cc.CLI_SESSIONS.pop("mcp/off", None)
     cmd, _ = cc._build_cmd("mcp/off", "q", "ctx", stream=True)
@@ -2798,9 +2798,9 @@ def test_build_cmd_no_mcp_when_disabled(monkeypatch):
 def test_build_cmd_allows_web_tools_by_default(monkeypatch, tmp_path):
     # With no tools.json, the ethos-safe defaults apply: web research allowed, the
     # executor's hands (Write/Edit/Bash) denied.
-    from pappus import claude_cli as cc
-    monkeypatch.delenv("PAPPUS_MCP_TOKEN", raising=False)
-    monkeypatch.setenv("PAPPUS_TOOLS", str(tmp_path / "none.json"))   # absent -> defaults
+    from dandelion import claude_cli as cc
+    monkeypatch.delenv("DANDELION_MCP_TOKEN", raising=False)
+    monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "none.json"))   # absent -> defaults
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
     cmd, _ = cc._build_cmd("web/on", "q", "ctx", stream=False)
     assert "WebSearch" in cmd and "WebFetch" in cmd
@@ -2813,11 +2813,11 @@ def test_build_cmd_honors_tools_config(monkeypatch, tmp_path):
     # A tools.json is the single source of truth: here, allow only WebSearch and
     # deny nothing → no WebFetch, no --disallowed-tools.
     import json
-    from pappus import claude_cli as cc
+    from dandelion import claude_cli as cc
     p = tmp_path / "tools.json"
     p.write_text(json.dumps({"allow": ["WebSearch"], "deny": []}))
-    monkeypatch.delenv("PAPPUS_MCP_TOKEN", raising=False)
-    monkeypatch.setenv("PAPPUS_TOOLS", str(p))
+    monkeypatch.delenv("DANDELION_MCP_TOKEN", raising=False)
+    monkeypatch.setenv("DANDELION_TOOLS", str(p))
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
     cmd, _ = cc._build_cmd("web/cfg", "q", "ctx", stream=False)
     assert "WebSearch" in cmd and "WebFetch" not in cmd
@@ -2826,8 +2826,8 @@ def test_build_cmd_honors_tools_config(monkeypatch, tmp_path):
 
 
 def test_tools_config_defaults_and_file(monkeypatch, tmp_path):
-    from pappus import tools_config as tc
-    monkeypatch.setenv("PAPPUS_TOOLS", str(tmp_path / "tools.json"))
+    from dandelion import tools_config as tc
+    monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "tools.json"))
     # no file -> ethos-safe defaults
     assert tc.allow_list() == ["WebSearch", "WebFetch"]
     assert tc.deny_list() == ["Write", "Edit", "Bash"]
@@ -2845,7 +2845,7 @@ def _mcp_client(client_host="127.0.0.1"):
     # these tests stand in for the legitimate on-box MCP caller (TestClient's
     # default host is "testclient", which the loopback guard would reject).
     from starlette.testclient import TestClient
-    import pappus.app as app
+    import dandelion.app as app
     tc = TestClient(app.app, client=(client_host, 50000))
     return app, tc, app.STATE["mcp_token"]
 
@@ -2859,7 +2859,7 @@ def test_internal_cells_forbidden_without_token():
 
 def test_internal_route_rejects_nonloopback_origin_even_with_valid_token():
     # A correct token from off-box must still be refused — the cell-mutation routes
-    # are loopback-only, a second factor beyond the token (guards PAPPUS_HOST=0.0.0.0).
+    # are loopback-only, a second factor beyond the token (guards DANDELION_HOST=0.0.0.0).
     app, client, tok = _mcp_client(client_host="10.0.0.5")
     bk = app.STATE["backend"]; d = "mcp/lan"; bk.messages(d)
     m = bk.add(d, "keep", "code")
@@ -2908,7 +2908,7 @@ def test_cells_dirty_mark_during_stream_survives_to_consume():
     """The stream generator resets cells_dirty at the start of a turn; an MCP cell
     edit on another thread mid-turn must still be seen by the end-of-turn consume."""
     import threading
-    import pappus.app as app
+    import dandelion.app as app
     app._reset_cells_dirty()                            # gen: start of turn
     t = threading.Thread(target=app._mark_cells_dirty)  # the AI edits a cell mid-turn
     t.start(); t.join()
@@ -2921,7 +2921,7 @@ def test_cells_dirty_consume_atomic_no_lost_update():
     that consume or left set for the next one. With a non-atomic read-then-reset a
     mark landing between the read and the reset would be lost."""
     import threading
-    import pappus.app as app
+    import dandelion.app as app
     app._reset_cells_dirty()
     observed = 0
     ROUNDS = 200
@@ -2985,7 +2985,7 @@ def test_mcp_read_cell_unknown_id_raises(monkeypatch):
 
 def test_mcp_read_cell_is_allowed_for_both_clis():
     # The new tool must be in both CLIs' allow-lists or the model can't call it.
-    from pappus import claude_cli, codex_cli
+    from dandelion import claude_cli, codex_cli
     assert "mcp__cells__read_cell" in claude_cli._ALLOWED_TOOLS
     assert "read_cell" in codex_cli._ALLOWED_TOOLS
 
@@ -3016,7 +3016,7 @@ def test_build_context_numbering_is_absolute_across_muted():
 
 
 def test_cell_number_is_one_based_position():
-    import pappus.app as app
+    import dandelion.app as app
     bk = app.STATE["backend"]; d = "num/pos"; bk.messages(d)
     a = bk.add(d, "a", "code"); bk.add(d, "b", "note"); c = bk.add(d, "c", "code")
     assert app._cell_number(bk, d, a.id) == 1
@@ -3025,9 +3025,9 @@ def test_cell_number_is_one_based_position():
 
 
 def test_msgrow_shows_cell_number_badge():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    from pappus.client import Msg
+    from dandelion.client import Msg
     html = to_xml(app.MsgRow(Msg("_z", "code", "x=1"), num=4))
     assert 'class="cell-num"' in html and ">4<" in html
 
@@ -3035,12 +3035,12 @@ def test_msgrow_shows_cell_number_badge():
 def test_ab_shortcut_sends_no_type_so_the_server_inherits():
     # the a/b keyboard shortcut posts no msg_type at all, so cell_insert inherits
     # the anchor cell's type (use the ＋ menu to pick a type explicitly).
-    import pappus.app as app
+    import dandelion.app as app
     assert "values: {id: id, where: where}" in app.STREAM_JS
 
 
 def test_cell_insert_route_creates_note_when_asked():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "ins/note"
     bk = app.STATE["backend"]; bk.messages("ins/note")
     a = bk.add("ins/note", "x", "code")
@@ -3054,16 +3054,16 @@ def test_build_cmd_prompt_survives_variadic_flags(monkeypatch):
     # following bare args, so the prompt positional must stay last in every mode —
     # else the prompt is silently swallowed and Claude gets no input. Guards a
     # bug we already hit once when --allowedTools was added.
-    from pappus import claude_cli as cc
+    from dandelion import claude_cli as cc
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
-    monkeypatch.delenv("PAPPUS_CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.delenv("DANDELION_CLAUDE_CLI_MODEL", raising=False)
     for tools_on in (True, False):
         if tools_on:
-            monkeypatch.setenv("PAPPUS_MCP_TOKEN", "t")
-            monkeypatch.setenv("PAPPUS_APP_URL", "http://127.0.0.1:8000")
-            monkeypatch.delenv("PAPPUS_CELL_TOOLS", raising=False)
+            monkeypatch.setenv("DANDELION_MCP_TOKEN", "t")
+            monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
+            monkeypatch.delenv("DANDELION_CELL_TOOLS", raising=False)
         else:
-            monkeypatch.setenv("PAPPUS_CELL_TOOLS", "0")
+            monkeypatch.setenv("DANDELION_CELL_TOOLS", "0")
         for stream in (True, False):
             cc.CLI_SESSIONS.pop("guard/d", None)
             cmd, _ = cc._build_cmd("guard/d", "THE_PROMPT", "ctx", stream=stream)
@@ -3075,7 +3075,7 @@ def test_toc_query_is_scoped_to_one_stream():
     # buildTOC must resolve a single #stream via getElementById and query headings
     # within it. A global '#stream .note-view …' selector matches BOTH the old and
     # new #stream during an htmx outerHTML swap, doubling the table of contents.
-    import pappus.app as app
+    import dandelion.app as app
     assert "getElementById('stream')" in app.TOC_JS
     assert "#stream .note-view" not in app.TOC_JS      # the doubling selector is gone
 
@@ -3101,7 +3101,7 @@ def test_complete_code_never_raises_on_bad_input():
 
 
 def test_complete_route_forwards_to_backend():
-    import pappus.app as app
+    import dandelion.app as app
     from starlette.testclient import TestClient
     class FakeKernel:
         def complete(self, dialog, code, line, col):
@@ -3112,8 +3112,8 @@ def test_complete_route_forwards_to_backend():
 
 
 def test_complete_route_empty_when_backend_cannot_complete():
-    import pappus.app as app
-    from pappus.client import MockBackend
+    import dandelion.app as app
+    from dandelion.client import MockBackend
     from starlette.testclient import TestClient
     app.STATE["backend"] = MockBackend()           # no .complete method
     r = TestClient(app.app).post("/complete", data={"code": "x", "line": 1, "col": 1})
@@ -3123,7 +3123,7 @@ def test_complete_route_empty_when_backend_cannot_complete():
 def test_completion_autotrigger_and_tab_accept_wired():
     # SolveIt-style polish: completion fires as you type (inputRead, identifier/dot
     # only) and Tab accepts the highlighted item. Guards the JS wiring.
-    import pappus.app as app
+    import dandelion.app as app
     js = app.COMPLETE_JS
     assert "__showCompletions" in js and "__autocompleteOnType" in js
     assert "inputRead" in js                       # auto-trigger as you type
@@ -3136,9 +3136,9 @@ def test_completion_autotrigger_and_tab_accept_wired():
 def test_pending_prompt_shows_thinking_spinner():
     # While an answer is pending (no output yet), the bubble shows a spinner +
     # "Thinking…" and the SSE wiring, so the user sees the AI is working.
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    from pappus.client import MockBackend
+    from dandelion.client import MockBackend
     b = MockBackend(); app.STATE["backend"] = b; app.STATE["dialog"] = "spin/d"
     b.messages("spin/d"); m = b.add("spin/d", "q?", "prompt", model="claude-opus-high")
     app.STATE["pending_stream"] = ("spin/d", m.id)
@@ -3150,7 +3150,7 @@ def test_pending_prompt_shows_thinking_spinner():
 
 def test_stream_js_toggles_streaming_caret():
     # The blinking caret marks an answer as actively streaming, removed on done.
-    import pappus.app as app
+    import dandelion.app as app
     assert "classList.add('streaming')" in app.STREAM_JS
     assert "classList.remove('streaming')" in app.STREAM_JS
 
@@ -3160,7 +3160,7 @@ def test_stream_js_esc_keeps_escaped_cell_in_view():
     # and re-scrolled into view on afterSettle so the viewport stays at that cell
     # instead of landing at the bottom (the composer). Both the Esc handler and
     # the afterSettle re-assert must reference the same __escToCell hand-off.
-    import pappus.app as app
+    import dandelion.app as app
     js = app.STREAM_JS
     assert "window.__escToCell = cid" in js                 # recorded on Esc-save
     assert "window.__escToCell || window.__viewCell" in js  # view target derived from it
@@ -3172,7 +3172,7 @@ def test_stream_js_delete_lands_on_following_cell_in_view():
     # `dd` deletes the selected cell; focus must land on the cell directly
     # following it (or the previous one if it was last) and that cell must be
     # scrolled into view on afterSettle — no drifting down to the composer.
-    import pappus.app as app
+    import dandelion.app as app
     js = app.STREAM_JS
     assert "window.__selCell = ids[idx + 1] || ids[idx - 1] || null" in js  # following cell
     assert "window.__viewCell = window.__selCell" in js     # request it into view
@@ -3183,7 +3183,7 @@ def test_scroll_to_uses_nearest_never_center():
     # scroll_to (bring a re-run / just-added cell into view) must align with the
     # least scroll — 'nearest', which doesn't move an already-visible cell — never
     # 'center', which in a long notebook yanks a top cell halfway down the page.
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "scroll/near"
     bk = app.STATE["backend"]
@@ -3200,7 +3200,7 @@ def test_stream_js_selection_does_not_open_editor():
     # trigger click-to-edit. A capture-phase click guard cancels the click when a
     # non-empty selection lives inside the clicked .clickedit view; a plain click
     # (collapsed selection) still opens the editor.
-    import pappus.app as app
+    import dandelion.app as app
     js = app.STREAM_JS
     assert "closest('.clickedit')" in js
     assert "!sel.isCollapsed" in js                 # only a real (non-empty) selection
@@ -3216,7 +3216,7 @@ def test_stream_js_answer_stream_does_not_yank_to_bottom():
     # re-ask. It should stick to the bottom ONLY when already there (composer send
     # / last cell). The unconditional scrollHeight pin must be gone from both the
     # answer and the code-exec msg handlers.
-    import pappus.app as app
+    import dandelion.app as app
     js = app.STREAM_JS
     assert "if(s) s.scrollTop = s.scrollHeight;" not in js   # old unconditional yank removed
     # gated on an already-at-bottom check, applied in both stream handlers
@@ -3228,29 +3228,29 @@ def test_stream_js_shift_enter_does_not_advance_past_a_prompt():
     # Shift+Enter runs + advances to the next cell (Jupyter) for code/note, but a
     # prompt streams its answer in below — advancing would scroll the viewport off
     # to the next section instead of the answer. Prompts must stay put.
-    import pappus.app as app
+    import dandelion.app as app
     assert "!row.classList.contains('prompt')" in app.STREAM_JS
 
 
 def test_stream_js_retries_failed_mermaid_render():
     # Mermaid marks a node data-processed before rendering; failed attempts must
     # clear that marker or later htmx rescans will never retry the diagram.
-    import pappus.app as app
+    import dandelion.app as app
     assert "MERMAID_MAX_TRIES" in app.STREAM_JS
-    assert "__pappusMermaidTries" in app.STREAM_JS
+    assert "__dandelionMermaidTries" in app.STREAM_JS
     assert "removeAttribute('data-processed')" in app.STREAM_JS
     assert "pre.mermaid[data-processed]" in app.STREAM_JS
-    assert "Pappus Mermaid render failed" in app.STREAM_JS
+    assert "Dandelion Mermaid render failed" in app.STREAM_JS
 
 
 def test_stream_js_coalesces_mermaid_render_runs():
     # A code-cell run refreshes all of #stream. Multiple markdown cells can then
     # ask Mermaid to render at once; keep those calls serialized and scoped to the
     # current stream so one rerender doesn't scramble existing diagrams.
-    import pappus.app as app
+    import dandelion.app as app
     assert "function queueMermaidRender" in app.STREAM_JS
-    assert "__pappusMermaidRenderActive" in app.STREAM_JS
-    assert "__pappusMermaidRenderChain" in app.STREAM_JS
+    assert "__dandelionMermaidRenderActive" in app.STREAM_JS
+    assert "__dandelionMermaidRenderChain" in app.STREAM_JS
     assert "return drawMermaid(scope)" in app.STREAM_JS
     assert "document.getElementById('stream') || el" in app.STREAM_JS
 
@@ -3258,7 +3258,7 @@ def test_stream_js_coalesces_mermaid_render_runs():
 def test_stream_js_renders_mermaid_with_unique_svg_ids():
     # Rendering a later diagram must not reuse Mermaid's implicit per-run IDs and
     # collide with earlier SVG defs/markers/styles.
-    import pappus.app as app
+    import dandelion.app as app
     assert "function mermaidNodeId" in app.STREAM_JS
     assert "data-mermaid-id" in app.STREAM_JS
     assert "window.mermaid.render(n.getAttribute('data-mermaid-id'), src, n)" in app.STREAM_JS
@@ -3271,7 +3271,7 @@ def test_mermaid_fence_rewrites_subgraph_direction_td_to_tb():
     # takes TB/BT/LR/RL), so AI-drawn diagrams that use it render a syntax bomb.
     # The fence renderer rewrites the equivalent TB in place; the top-level
     # `flowchart TD` and TD inside labels must be left untouched.
-    import pappus.app as app
+    import dandelion.app as app
     src = (
         "```mermaid\n"
         "flowchart TD\n"
@@ -3295,7 +3295,7 @@ def test_mermaid_fence_decodes_entities_so_arrows_render():
     # browser's textContent decodes back to a literal `-&gt;` and mermaid draws
     # that text instead of an arrow. The fence must decode entities first so the
     # single escape round-trips to a real `>`.
-    import pappus.app as app
+    import dandelion.app as app
     src = (
         "```mermaid\n"
         "flowchart TD\n"
@@ -3312,9 +3312,9 @@ def test_mermaid_fence_decodes_entities_so_arrows_render():
 def test_send_htmx_returns_stream_fragment_not_full_page():
     # The composer posts via htmx, so /send returns just #stream (fast swap) when
     # HX-Request is set, and the whole page only for a no-JS submit.
-    import pappus.app as app
+    import dandelion.app as app
     from starlette.testclient import TestClient
-    from pappus.client import MockBackend
+    from dandelion.client import MockBackend
     app.STATE["backend"] = MockBackend(); app.STATE["dialog"] = "send/htmx"
     c = TestClient(app.app)
     frag = c.post("/send", data={"content": "a note", "msg_type": "note"},
@@ -3325,9 +3325,9 @@ def test_send_htmx_returns_stream_fragment_not_full_page():
 
 
 def test_claude_cli_model_ids_set_model_and_effort(monkeypatch):
-    from pappus import claude_cli as cc
+    from dandelion import claude_cli as cc
     monkeypatch.setattr(cc, "claude_bin", lambda: "/usr/bin/claude")
-    monkeypatch.delenv("PAPPUS_CLAUDE_CLI_MODEL", raising=False)
+    monkeypatch.delenv("DANDELION_CLAUDE_CLI_MODEL", raising=False)
     cc.CLI_SESSIONS.pop("opus/d", None)
     cmd, _ = cc._build_cmd("opus/d", "hi", "", stream=True, model="claude-opus-high")
     assert cmd[cmd.index("--model") + 1] == "opus"
@@ -3342,7 +3342,7 @@ def test_claude_cli_model_ids_set_model_and_effort(monkeypatch):
 
 
 def test_answer_code_blocks_extracts_fenced_code_in_order():
-    import pappus.app as app
+    import dandelion.app as app
     md = ("Here you go:\n\n```python\nx = 1\nprint(x)\n```\n\n"
           "and a diagram\n\n```mermaid\nflowchart TD\n  A-->B\n```\n")
     assert app._answer_code_blocks(md) == [
@@ -3353,7 +3353,7 @@ def test_answer_code_blocks_extracts_fenced_code_in_order():
 
 
 def test_split_to_code_inserts_code_cells_below_prompt():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     app.STATE["dialog"] = "test/split"
     bk = app.STATE["backend"]; bk.messages("test/split")
@@ -3368,7 +3368,7 @@ def test_split_to_code_inserts_code_cells_below_prompt():
 
 
 def test_split_to_code_routes_mermaid_into_a_note():
-    import pappus.app as app
+    import dandelion.app as app
     app.STATE["dialog"] = "test/split-mermaid"
     bk = app.STATE["backend"]; bk.messages("test/split-mermaid")
     m = bk.add("test/split-mermaid", "diagram it", "prompt")
@@ -3382,9 +3382,9 @@ def test_split_to_code_routes_mermaid_into_a_note():
 
 
 def test_split_button_only_shows_when_answer_has_code():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
-    from pappus.client import Msg
+    from dandelion.client import Msg
     has = Msg(id="_p1", msg_type="prompt", content="q", output="```python\nx=1\n```")
     no = Msg(id="_p2", msg_type="prompt", content="q", output="just prose")
     assert "/cell/split" in to_xml(app.MsgRow(has))
@@ -3395,7 +3395,7 @@ def test_composer_shows_instant_pending_spinner():
     # On an Ask-AI send the composer injects a "Thinking…" wheel immediately
     # (client-side), so a working indicator is visible for every model — including
     # the blocking API ones that stream nothing — until the answer swaps in.
-    import pappus.app as app
+    import dandelion.app as app
     js = app.COMPOSER_JS
     assert "_showPendingSpinner" in js and "pending-spinner" in js
     assert 'class="spinner"' in js and "Thinking" in js
@@ -3403,7 +3403,7 @@ def test_composer_shows_instant_pending_spinner():
     assert "__pendingSpinnerCleanup" in js                     # stray-spinner cleanup
 
 
-# ---- cell-centric nbdev libraries (pappus.nbdev_export) -------------------
+# ---- cell-centric nbdev libraries (dandelion.nbdev_export) -------------------
 def _lib_backend():
     """Two unrelated dialogs whose cells tag into one library `audiolib`."""
     b = MockBackend()
@@ -3416,14 +3416,14 @@ def _lib_backend():
 
 
 def test_parse_lib_target():
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     assert nx.parse_lib_target("audiolib:layers") == ("audiolib", "layers")
     assert nx.parse_lib_target("audiolib:") == ("audiolib", "core")     # empty module -> core
     assert nx.parse_lib_target("layers") == (None, "layers")            # no colon -> dialog-local
 
 
 def test_gather_collects_across_dialogs_excludes_plain_export():
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     mods = nx.gather(_lib_backend(), "audiolib")
     assert set(mods) == {"layers", "blocks"}
     # layers drew a cell from EACH dialog — cross-dialog assembly
@@ -3435,7 +3435,7 @@ def test_gather_collects_across_dialogs_excludes_plain_export():
 
 
 def test_module_notebook_has_default_exp_and_provenance():
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     nb = nx.module_notebook("layers", [{"body": "class C: pass",
                                         "dialog": "conv/conv1d", "id": "_abc12345"}])
     srcs = ["".join(c["source"]) for c in nb["cells"]]
@@ -3447,7 +3447,7 @@ def test_module_notebook_has_default_exp_and_provenance():
 
 def test_library_files_emits_pyproject_and_valid_notebooks():
     import json
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     files = nx.library_files(_lib_backend(), "audiolib")
     assert "pyproject.toml" in files and "[tool.nbdev]" in files["pyproject.toml"]
     assert "nbs/layers.ipynb" in files and "nbs/blocks.ipynb" in files
@@ -3456,9 +3456,9 @@ def test_library_files_emits_pyproject_and_valid_notebooks():
 
 
 def test_build_library_minimal_scaffold_and_degrades_without_nbdev(tmp_path, monkeypatch):
-    # PAPPUS_NBDEV_SCAFFOLD=0 skips nbdev-new (no network) -> minimal pyproject.
-    from pappus import nbdev_export as nx
-    monkeypatch.setenv("PAPPUS_NBDEV_SCAFFOLD", "0")
+    # DANDELION_NBDEV_SCAFFOLD=0 skips nbdev-new (no network) -> minimal pyproject.
+    from dandelion import nbdev_export as nx
+    monkeypatch.setenv("DANDELION_NBDEV_SCAFFOLD", "0")
     monkeypatch.setattr(nx, "run_nbdev", lambda dest: (False, "nbdev not installed"))
     res = nx.build_library(_lib_backend(), "audiolib", str(tmp_path), pkg_name="audiolib")
     assert res["pkg"] == "audiolib" and set(res["modules"]) == {"layers", "blocks"}
@@ -3470,7 +3470,7 @@ def test_build_library_minimal_scaffold_and_degrades_without_nbdev(tmp_path, mon
 
 def test_build_library_scaffolds_on_fresh_dir(tmp_path, monkeypatch):
     # A fresh dir triggers nbdev_create_config (stubbed — offline anyway).
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     calls = {}
 
     def fake_scaffold(dest, pkg, *a, **k):
@@ -3489,7 +3489,7 @@ def test_build_library_scaffolds_on_fresh_dir(tmp_path, monkeypatch):
 
 def test_build_library_reuses_existing_nbdev_project(tmp_path, monkeypatch):
     # A dir that's already an nbdev project is reused — no scaffold attempt.
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     (tmp_path / "pyproject.toml").write_text("[tool.nbdev]\nlib_path='x'\nnbs_path='nbs'\n")
 
     def boom(*a, **k):
@@ -3505,8 +3505,8 @@ def test_build_library_reuses_existing_nbdev_project(tmp_path, monkeypatch):
 def test_build_library_prunes_orphaned_modules_on_retag(tmp_path, monkeypatch):
     # Retagging every cell to a new module must not leave the old module's notebook
     # (or its tangled .py) behind — the live cells are the source of truth.
-    from pappus import nbdev_export as nx
-    monkeypatch.setenv("PAPPUS_NBDEV_SCAFFOLD", "0")        # minimal, offline
+    from dandelion import nbdev_export as nx
+    monkeypatch.setenv("DANDELION_NBDEV_SCAFFOLD", "0")        # minimal, offline
     monkeypatch.setattr(nx, "run_nbdev", lambda dest: (False, "skipped"))
     nx.build_library(_lib_backend(), "audiolib", str(tmp_path), pkg_name="audiolib")
     assert (tmp_path / "nbs" / "layers.ipynb").exists()
@@ -3532,7 +3532,7 @@ def test_build_library_prunes_orphaned_modules_on_retag(tmp_path, monkeypatch):
 
 
 def test_is_nbdev_project(tmp_path):
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     assert not nx.is_nbdev_project(str(tmp_path))             # empty
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
     assert not nx.is_nbdev_project(str(tmp_path))             # pyproject but no [tool.nbdev]
@@ -3542,16 +3542,16 @@ def test_is_nbdev_project(tmp_path):
 
 def test_run_nbdev_missing_binary_is_soft(monkeypatch):
     import shutil
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
     monkeypatch.setattr(shutil, "which", lambda name: None)
     ok, detail = nx.run_nbdev("/tmp/whatever")
     assert ok is False and "nbdev" in detail.lower()
 
 
-# ---- library registry + in-app UI (pappus.libraries + app routes) --------
+# ---- library registry + in-app UI (dandelion.libraries + app routes) --------
 def test_library_registry_add_get_names_remove(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import libraries
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import libraries
     lib = libraries.add("audiolib")
     assert lib["name"] == "audiolib" and lib["pkg"] == "audiolib" and lib["path"]
     assert libraries.names() == ["audiolib"]
@@ -3563,22 +3563,22 @@ def test_library_registry_add_get_names_remove(tmp_path, monkeypatch):
 
 
 def test_library_add_custom_pkg_and_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    from pappus import libraries
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    from dandelion import libraries
     lib = libraries.add("My Lib", pkg="mylib", path="/tmp/x")
     assert lib["name"] == "My Lib" and lib["pkg"] == "mylib" and lib["path"] == "/tmp/x"
 
 
 def test_set_export_target_replaces_existing():
-    from pappus import export
+    from dandelion import export
     out = export.set_export_target("#| export old:mod\nx = 1", "audiolib:layers")
     assert "#| export audiolib:layers" in out
     assert "old:mod" not in out and "x = 1" in out       # old export gone, body kept
 
 
 def test_cell_export_to_route_tags_cell(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    import pappus.app as app
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    import dandelion.app as app
     app.STATE["dialog"] = "lib/tag"
     b = app.STATE["backend"]
     b.messages("lib/tag")
@@ -3588,9 +3588,9 @@ def test_cell_export_to_route_tags_cell(tmp_path, monkeypatch):
 
 
 def test_library_build_route_emits_and_reports(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    import pappus.app as app
-    from pappus import libraries, nbdev_export
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    import dandelion.app as app
+    from dandelion import libraries, nbdev_export
     from fasthtml.common import to_xml
     dest = tmp_path / "audiolib"
     libraries.add("audiolib", path=str(dest))
@@ -3605,7 +3605,7 @@ def test_library_build_route_emits_and_reports(tmp_path, monkeypatch):
 
 
 def test_libraries_page_top_bar_link_present():
-    import pappus.app as app
+    import dandelion.app as app
     from fasthtml.common import to_xml
     assert 'href="/libraries"' in to_xml(app.Page())
 
@@ -3614,7 +3614,7 @@ def test_git_identity_strips_quotes(monkeypatch):
     # Some git configs store the name WITH quotes (`user.name = "Jane Doe"`); those
     # must be stripped or they double up and break the generated pyproject TOML.
     import subprocess
-    from pappus import nbdev_export as nx
+    from dandelion import nbdev_export as nx
 
     def fake_run(cmd, **kw):
         key = cmd[-1]
@@ -3629,7 +3629,7 @@ def test_git_identity_strips_quotes(monkeypatch):
 
 
 def test_add_syspath_backend_posts_to_kernel():
-    from pappus.client import HttpKernelBackend
+    from dandelion.client import HttpKernelBackend
     b = HttpKernelBackend.__new__(HttpKernelBackend)
     seen = {}
     b._post = lambda path, body: seen.update(path=path, body=body) or {"ok": True, "added": True}
@@ -3638,10 +3638,10 @@ def test_add_syspath_backend_posts_to_kernel():
 
 
 def test_library_use_route_adds_path_and_reports(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    import pappus.app as app
-    from pappus import libraries
-    from pappus.client import HttpKernelBackend
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    import dandelion.app as app
+    from dandelion import libraries
+    from dandelion.client import HttpKernelBackend
     from fasthtml.common import to_xml
     libraries.add("mylib", path=str(tmp_path / "mylib"))
     b = HttpKernelBackend.__new__(HttpKernelBackend)
@@ -3655,10 +3655,10 @@ def test_library_use_route_adds_path_and_reports(tmp_path, monkeypatch):
 
 
 def test_library_use_button_kernel_only(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPPUS_DATA", str(tmp_path))
-    import pappus.app as app
-    from pappus import libraries
-    from pappus.client import MockBackend
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    import dandelion.app as app
+    from dandelion import libraries
+    from dandelion.client import MockBackend
     from fasthtml.common import to_xml
     libraries.add("mylib", path=str(tmp_path / "mylib"))
     monkeypatch.setitem(app.STATE, "backend", MockBackend())   # no add_syspath

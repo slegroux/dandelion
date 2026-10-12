@@ -66,7 +66,7 @@ def run_checks(t: Target) -> list[Check]:
         tunnel_up = port_open("127.0.0.1", t.ssh.local_port)
         checks.append((
             tunnel_up, "TUNNEL",
-            f"local {t.ssh.local_port} {'up' if tunnel_up else 'down — run: pappus up ' + t.name}",
+            f"local {t.ssh.local_port} {'up' if tunnel_up else 'down — run: dandelion up ' + t.name}",
         ))
 
     checks.append(check_dns(host))

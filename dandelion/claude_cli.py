@@ -210,7 +210,7 @@ _ALLOWED_TOOLS = [f"mcp__cells__{t}"
                   for t in ("list_cells", "read_cell", "update_cell",
                             "str_replace", "insert_cell")]
 
-# Which tools the agent may/may not use is declarative — see pappus.tools_config
+# Which tools the agent may/may not use is declarative — see dandelion.tools_config
 # (allow: web research etc.; deny: the executor's hands Write/Edit/Bash). The
 # cell-editing MCP tools are wired separately below (they need the MCP server).
 
@@ -219,10 +219,10 @@ def _cell_tools_enabled() -> bool:
     """Cell-editing tools are live only inside the web-app process, which sets the
     shared token + loopback URL when it boots (see app._init_cell_tools). The
     kernel server imports this module but never sets them, so its path stays lean.
-    Set PAPPUS_CELL_TOOLS=0 to opt out (e.g. for the leanest TTFT)."""
-    if os.environ.get("PAPPUS_CELL_TOOLS", "1") == "0":
+    Set DANDELION_CELL_TOOLS=0 to opt out (e.g. for the leanest TTFT)."""
+    if os.environ.get("DANDELION_CELL_TOOLS", "1") == "0":
         return False
-    return bool(os.environ.get("PAPPUS_MCP_TOKEN") and os.environ.get("PAPPUS_APP_URL"))
+    return bool(os.environ.get("DANDELION_MCP_TOKEN") and os.environ.get("DANDELION_APP_URL"))
 
 
 def _write_mcp_config(dialog: str) -> str:
@@ -235,9 +235,9 @@ def _write_mcp_config(dialog: str) -> str:
         "args": ["-m", "server.mcp_cells"],
         "env": {
             "PYTHONPATH": root,
-            "PAPPUS_APP_URL": os.environ["PAPPUS_APP_URL"],
-            "PAPPUS_MCP_TOKEN": os.environ["PAPPUS_MCP_TOKEN"],
-            "PAPPUS_DIALOG": dialog,
+            "DANDELION_APP_URL": os.environ["DANDELION_APP_URL"],
+            "DANDELION_MCP_TOKEN": os.environ["DANDELION_MCP_TOKEN"],
+            "DANDELION_DIALOG": dialog,
         },
     }}}
     path = os.path.join(_cli_cwd(), f"mcp-cells-{uuid.uuid4().hex[:8]}.json")
@@ -263,7 +263,7 @@ def _cli_cwd() -> str:
     global _CLI_CWD
     if _CLI_CWD is None:
         import tempfile
-        _CLI_CWD = tempfile.mkdtemp(prefix="pappus-claude-")
+        _CLI_CWD = tempfile.mkdtemp(prefix="dandelion-claude-")
     return _CLI_CWD
 
 
@@ -312,12 +312,12 @@ def auth_status(timeout: float = 8.0) -> dict:
 
 
 def _model_config(model_id: str | None) -> tuple[str | None, str | None]:
-    """Map Pappus model ids to Claude Code --model/--effort flags."""
+    """Map Dandelion model ids to Claude Code --model/--effort flags."""
     if model_id in _CLI_MODEL_CONFIG:
         return _CLI_MODEL_CONFIG[model_id]
-    env_model = os.environ.get("PAPPUS_CLAUDE_CLI_MODEL")
+    env_model = os.environ.get("DANDELION_CLAUDE_CLI_MODEL")
     if env_model:
-        return env_model, os.environ.get("PAPPUS_CLAUDE_CLI_EFFORT", "high")
+        return env_model, os.environ.get("DANDELION_CLAUDE_CLI_EFFORT", "high")
     return None, None
 
 

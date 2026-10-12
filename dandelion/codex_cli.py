@@ -1,12 +1,12 @@
 """Codex via the installed `codex` CLI — current local Codex auth/config.
 
-This is the Codex-native sibling of ``pappus.claude_cli``. It lets Pappus use
+This is the Codex-native sibling of ``dandelion.claude_cli``. It lets Dandelion use
 the user's already-installed Codex CLI (ChatGPT login, configured provider, model
-defaults, plugins/auth) without requiring an OpenAI API key in Pappus.
+defaults, plugins/auth) without requiring an OpenAI API key in Dandelion.
 
 The Codex CLI is a full coding agent, so this path is intentionally conservative:
 it runs in a neutral scratch directory, uses a read-only sandbox, and sends the
-SolveIt/Polya persona as prompt text. When the Pappus web app is running, it
+SolveIt/Polya persona as prompt text. When the Dandelion web app is running, it
 can expose the same loopback notebook-cell MCP tools as the Claude path; those
 tools edit visible cells only and never run code.
 """
@@ -94,7 +94,7 @@ def _cli_cwd() -> str:
     global _CLI_CWD
     if _CLI_CWD is None:
         import tempfile
-        _CLI_CWD = tempfile.mkdtemp(prefix="pappus-codex-")
+        _CLI_CWD = tempfile.mkdtemp(prefix="dandelion-codex-")
     return _CLI_CWD
 
 
@@ -102,11 +102,11 @@ def _cell_tools_enabled() -> bool:
     """Cell tools are live only inside the web-app process.
 
     The app publishes a loopback URL and shared token at startup. Reuse
-    PAPPUS_CELL_TOOLS so one switch controls both Claude and Codex tool paths.
+    DANDELION_CELL_TOOLS so one switch controls both Claude and Codex tool paths.
     """
-    if os.environ.get("PAPPUS_CELL_TOOLS", "1") == "0":
+    if os.environ.get("DANDELION_CELL_TOOLS", "1") == "0":
         return False
-    return bool(os.environ.get("PAPPUS_MCP_TOKEN") and os.environ.get("PAPPUS_APP_URL"))
+    return bool(os.environ.get("DANDELION_MCP_TOKEN") and os.environ.get("DANDELION_APP_URL"))
 
 
 def _prompt(content: str, context: str = "", mode: str | None = None,
@@ -119,14 +119,14 @@ def _prompt(content: str, context: str = "", mode: str | None = None,
     if tools:
         sysmsg += _TOOLS_GUIDANCE
         boundary = (
-            "You are answering inside Pappus. Do not run shell commands, "
+            "You are answering inside Dandelion. Do not run shell commands, "
             "create scratch files, or inspect unrelated filesystem state. You may "
             "use the provided notebook-cell MCP tools only when the user explicitly "
             "asks for a visible cell edit. The user still runs code cells."
         )
     else:
         boundary = (
-            "You are answering inside Pappus, not acting as an autonomous "
+            "You are answering inside Dandelion, not acting as an autonomous "
             "coding agent. Do not run shell commands, edit files, create scratch files, "
             "or inspect the filesystem. Use only the notebook context below and answer "
             "in the visible small-steps SolveIt style."
@@ -146,13 +146,13 @@ def _toml(value: object) -> str:
 
 
 def _mcp_overrides(dialog: str) -> list[str]:
-    """Return `codex exec -c ...` args registering the Pappus cell MCP server."""
+    """Return `codex exec -c ...` args registering the Dandelion cell MCP server."""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = {
         "PYTHONPATH": root,
-        "PAPPUS_APP_URL": os.environ["PAPPUS_APP_URL"],
-        "PAPPUS_MCP_TOKEN": os.environ["PAPPUS_MCP_TOKEN"],
-        "PAPPUS_DIALOG": dialog,
+        "DANDELION_APP_URL": os.environ["DANDELION_APP_URL"],
+        "DANDELION_MCP_TOKEN": os.environ["DANDELION_MCP_TOKEN"],
+        "DANDELION_DIALOG": dialog,
     }
     pairs: list[tuple[str, object]] = [
         ("mcp_servers.cells.command", sys.executable),
@@ -172,12 +172,12 @@ def _mcp_overrides(dialog: str) -> list[str]:
 
 
 def _model_config(model_id: str | None) -> tuple[str, str] | tuple[None, None]:
-    """Map Pappus model ids to concrete Codex CLI model + reasoning flags."""
+    """Map Dandelion model ids to concrete Codex CLI model + reasoning flags."""
     if model_id in _CODEX_MODEL_CONFIG:
         return _CODEX_MODEL_CONFIG[model_id]
-    env = os.environ.get("PAPPUS_CODEX_CLI_MODEL")
+    env = os.environ.get("DANDELION_CODEX_CLI_MODEL")
     if env:
-        return env, os.environ.get("PAPPUS_CODEX_CLI_REASONING", "high")
+        return env, os.environ.get("DANDELION_CODEX_CLI_REASONING", "high")
     return _CODEX_MODEL_CONFIG["codex-gpt-5.5-high"]
 
 

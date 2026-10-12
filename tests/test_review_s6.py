@@ -1,12 +1,12 @@
 """S6 refactor: notebook/markdown export helpers moved out of the UI module.
 
-These exercise pappus.export_nb *directly* (not via pappus.app), proving the
+These exercise dandelion.export_nb *directly* (not via dandelion.app), proving the
 split gives the serializers independent, state-free testability.
 """
 import json
 
-from pappus.client import Msg
-from pappus.export_nb import to_ipynb, to_markdown
+from dandelion.client import Msg
+from dandelion.export_nb import to_ipynb, to_markdown
 
 
 def test_to_ipynb_direct_valid_nbformat():
@@ -43,6 +43,6 @@ def test_to_markdown_direct():
 
 def test_app_reexports_stay_identical():
     # app.<name> must resolve to the very same objects (tests reference app.to_ipynb).
-    import pappus.app as app
+    import dandelion.app as app
     assert app.to_ipynb is to_ipynb
     assert app.to_markdown is to_markdown

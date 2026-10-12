@@ -30,10 +30,10 @@ class Target:
 
 
 def _config_path(explicit: str | os.PathLike | None = None) -> Path:
-    """Find targets.yaml: explicit arg > $PAPPUS_CONFIG > package-adjacent default."""
+    """Find targets.yaml: explicit arg > $DANDELION_CONFIG > package-adjacent default."""
     if explicit:
         return Path(explicit)
-    env = os.environ.get("PAPPUS_CONFIG")
+    env = os.environ.get("DANDELION_CONFIG")
     if env:
         return Path(env)
     return Path(__file__).resolve().parent.parent / "targets.yaml"
@@ -106,7 +106,7 @@ def effective_default_model(path: str | os.PathLike | None = None) -> str:
 def get_target(name: str | None = None, path: str | os.PathLike | None = None) -> Target:
     cfg = load_config(path)
     targets = cfg.get("targets", {})
-    name = name or os.environ.get("PAPPUS_TARGET") or cfg.get("default")
+    name = name or os.environ.get("DANDELION_TARGET") or cfg.get("default")
     if name not in targets:
         raise KeyError(f"Unknown target '{name}'. Known: {', '.join(targets)}")
     raw = targets[name]

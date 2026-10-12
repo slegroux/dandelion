@@ -2,22 +2,22 @@
 
 All user data is local to the machine and never part of the git repo:
 
-    ~/.config/pappus/          (override with PAPPUS_DATA)
+    ~/.config/dandelion/          (override with DANDELION_DATA)
         dialogs-<target>.json            notebooks: cells, outputs, sidebar list
         dialogs-<target>.local.json      dialogs marked "keep local only"
         dialogs-<target>.private         names of those dialogs
         recall.json                      spaced-repetition schedule
         libraries.json                   registered nbdev libraries
         blog/                            the Quarto blog project
-        papers/                          reading library (PAPPUS_PAPERS)
+        papers/                          reading library (DANDELION_PAPERS)
         tools.json, secrets.json         Ask-AI tool policy, API keys
 
 `backup()` packs that into one .tar.gz and `restore()` unpacks it on a new
-install (`pappus backup` / `pappus restore`). API keys are left out of a
+install (`dandelion backup` / `dandelion restore`). API keys are left out of a
 backup unless asked for, so an archive can be copied around safely.
 
 `migrate_repo_data()` moves an old in-repo store (`<repo>/data`, which the
-justfile used to point PAPPUS_DATA at and `just sync` pushed to GitHub) into
+justfile used to point DANDELION_DATA at and `just sync` pushed to GitHub) into
 the local home once, never overwriting anything already there.
 """
 from __future__ import annotations
@@ -37,30 +37,82 @@ _SKIP_DIRS = {".git", "__pycache__", ".ipynb_checkpoints", ".quarto"}
 
 
 def data_root() -> Path:
-    base = os.environ.get("PAPPUS_DATA")
-    return Path(base).expanduser() if base else Path.home() / ".config" / "pappus"
+    base = os.environ.get("DANDELION_DATA")
+    return Path(base).expanduser() if base else Path.home() / ".config" / "dandelion"
 
 
-# The data root's name before the rename to Pappus.
-LEGACY_ROOT_NAME = "solveit-" + "sidekick"
+# The data root's names before the renames, newest first.
+LEGACY_ROOT_NAMES = ("pappus", "solveit-" + "sidekick")
 
 
 def adopt_legacy_root(home: Path | None = None) -> Path | None:
-    """First start after the rename: move ~/.config/<legacy> to ~/.config/pappus
+    """First start after a rename: move ~/.config/<old name> to ~/.config/dandelion
     and leave a symlink at the old path, so old scripts and backups still find
-    the data. Runs only when PAPPUS_DATA is unset, the new root does not exist
-    yet and the old one is a real directory; never overwrites. Called once at
-    serve time (cli), never from data_root(), so a path lookup can't move data.
-    Returns the new root when it moved something."""
-    if os.environ.get("PAPPUS_DATA"):
+    the data. The newest old root that is a real directory moves (an older one is
+    normally already a link to it). Runs only when DANDELION_DATA is unset and the
+    new root does not exist yet; never overwrites. Converted papers are re-keyed
+    to their new paths. Called once at serve time (cli), never from data_root(),
+    so a path lookup can't move data. Returns the new root when it moved something."""
+    if os.environ.get("DANDELION_DATA"):
         return None
     cfg = (home or Path.home()) / ".config"
-    old, new = cfg / LEGACY_ROOT_NAME, cfg / "pappus"
-    if new.exists() or new.is_symlink() or not old.is_dir() or old.is_symlink():
+    new = cfg / "dandelion"
+    if new.exists() or new.is_symlink():
         return None
+    old = next((cfg / n for n in LEGACY_ROOT_NAMES
+                if (cfg / n).is_dir() and not (cfg / n).is_symlink()), None)
+    if old is None:
+        return None
+    old_real = old.resolve()
     old.rename(new)
     old.symlink_to(new, target_is_directory=True)
+    try:
+        _rekey_moved_papers(new, [old_real, *(cfg / n for n in LEGACY_ROOT_NAMES)])
+    except OSError:  # the move is done; a paper that misses its cache just re-converts
+        pass
     return new
+
+
+def _rekey_moved_papers(root: Path, old_roots: list[Path]) -> int:
+    """After the data root moved, give each converted upload a cache entry under
+    its new path-based key (paper._md_key hashes the absolute path), so papers
+    reopen without a slow marker re-conversion, and re-point sources.json entries
+    that name a file under an old root. Every old root is tried, since a paper
+    converted before an earlier rename still carries that root's key. Never
+    overwrites; returns how many conversions were re-keyed."""
+    import json
+
+    from .paper import _md_key, _path_key, _read_json_dict
+    papers, roots = root / "papers", list(dict.fromkeys(str(r) for r in old_roots))
+    up = papers / "uploads"
+    n = 0
+    for pdf in sorted(up.glob("*.pdf")) if up.is_dir() else []:
+        new_md = papers / f"{_md_key(pdf)}.md"
+        if new_md.exists():
+            continue
+        stamp = pdf.stat().st_mtime_ns
+        for r in roots:
+            old_md = papers / f"{_path_key(f'{r}/papers/uploads/{pdf.name}', stamp)}.md"
+            if old_md.is_file():
+                shutil.copy2(old_md, new_md)
+                n += 1
+                break
+    src = papers / "sources.json"
+    recs = _read_json_dict(src)
+    if recs:
+        changed = False
+        for dialog, rec in recs.items():
+            path = str(rec.get("source", "")) if isinstance(rec, dict) else ""
+            for r in roots:
+                if path.startswith(r + os.sep):
+                    recs[dialog] = {**rec, "source": str(root / path[len(r) + 1:])}
+                    changed = True
+                    break
+        if changed:
+            tmp = src.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(recs, indent=1))
+            tmp.replace(src)
+    return n
 
 
 def _config_files() -> dict[str, Path]:
@@ -120,7 +172,7 @@ def _pidfile() -> Path:
 
 
 def mark_serving() -> None:
-    """Record this `pappus serve` process, so restore can refuse to run under it."""
+    """Record this `dandelion serve` process, so restore can refuse to run under it."""
     import atexit
     f = _pidfile()
     if running_server_pid():
@@ -154,7 +206,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def running_server_pid() -> int | None:
-    """PID of a live `pappus serve` using this data root, else None."""
+    """PID of a live `dandelion serve` using this data root, else None."""
     try:
         pid = int(_pidfile().read_text().strip())
     except (OSError, ValueError):
@@ -205,7 +257,7 @@ def _members(with_secrets: bool) -> list[tuple[Path, str]]:
         papers_inside = True
     out = [(p, a) for p, a in _walk(root, "data/", special, with_secrets)
            if not (papers_inside is False and a.startswith("data/papers/"))]
-    if not papers_inside:                        # PAPPUS_PAPERS elsewhere
+    if not papers_inside:                        # DANDELION_PAPERS elsewhere
         out += _walk(papers, "data/papers/", special, with_secrets)
     cfg = _config_files()
     if not with_secrets:
@@ -233,9 +285,9 @@ def backup(dest: str | Path | None = None, with_secrets: bool = False) -> tuple[
     import io
     import json
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    dest = Path(dest).expanduser() if dest else Path.cwd() / f"pappus-backup-{stamp}.tar.gz"
+    dest = Path(dest).expanduser() if dest else Path.cwd() / f"dandelion-backup-{stamp}.tar.gz"
     if dest.is_dir():
-        dest = dest / f"pappus-backup-{stamp}.tar.gz"
+        dest = dest / f"dandelion-backup-{stamp}.tar.gz"
     members = _members(with_secrets)
     index = json.dumps(_paper_keys(), indent=1).encode()
     fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

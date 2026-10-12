@@ -65,10 +65,10 @@ window.toggleCol = function(cls, key){
   // explicit toggle is still remembered per device via localStorage.
   var narrow = false;
   try { narrow = window.matchMedia('(max-width: 700px)').matches; } catch(e){}
-  restore('pappus_toc', 'toc-open', true);          // TOC default open
-  restore('pappus_noside', 'no-side', narrow);      // dialogs: shown on desktop, hidden on phone
-  restore('pappus_nopaper', 'no-paper', false);     // paper viewer default shown
-  restore('pappus_paperhidden', 'paper-collapsed', false);  // paper text default shown
+  restore('dandelion_toc', 'toc-open', true);          // TOC default open
+  restore('dandelion_noside', 'no-side', narrow);      // dialogs: shown on desktop, hidden on phone
+  restore('dandelion_nopaper', 'no-paper', false);     // paper viewer default shown
+  restore('dandelion_paperhidden', 'paper-collapsed', false);  // paper text default shown
   window.syncToggles();
   window.buildTOC();
 })();
@@ -84,7 +84,7 @@ window.toggleCol = function(cls, key){
     paper: {v:'--paper-w', el:'.paper', sign: 1, min:220, max:900},
     toc:   {v:'--toc-w',   el:'.toc',   sign:-1, min:160, max:520}
   };
-  var KEY = 'pappus_colw';
+  var KEY = 'dandelion_colw';
   function load(){ try { return JSON.parse(localStorage.getItem(KEY)||'{}'); } catch(e){ return {}; } }
   function save(o){ try { localStorage.setItem(KEY, JSON.stringify(o)); } catch(e){} }
   var saved = load();

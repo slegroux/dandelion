@@ -1,18 +1,18 @@
 """A tiny, zero-dependency MCP server that lets Claude edit the live notebook.
 
-Pappus's Max-plan path talks to Claude through the `claude` CLI (subscription
+Dandelion's Max-plan path talks to Claude through the `claude` CLI (subscription
 auth). The CLI is itself a tool-calling agent, so the way to let it *edit cells*
 — the way SolveIt's dialoghelper does on the API — is to hand it MCP tools. This
 module is that toolset, spoken over stdio as newline-delimited JSON-RPC 2.0.
 
-It holds no state of its own: each tool call reaches back to the running Pappus
+It holds no state of its own: each tool call reaches back to the running Dandelion
 web app over loopback HTTP (the app owns the live, in-memory dialog). The app
 URL, the target dialog, and a shared one-shot token arrive via env, set by
-`pappus.claude_cli` when it spawns `claude -p`:
+`dandelion.claude_cli` when it spawns `claude -p`:
 
-    PAPPUS_APP_URL     e.g. http://127.0.0.1:8000  (loopback only)
-    PAPPUS_DIALOG      the dialog whose cells these tools edit
-    PAPPUS_MCP_TOKEN   shared secret; the app rejects calls without it
+    DANDELION_APP_URL     e.g. http://127.0.0.1:8000  (loopback only)
+    DANDELION_DIALOG      the dialog whose cells these tools edit
+    DANDELION_MCP_TOKEN   shared secret; the app rejects calls without it
 
 Tools: list_cells, update_cell, str_replace, insert_cell — deliberately the same
 verbs dialoghelper/Claude Code use, so the model already knows how to drive them.
@@ -25,12 +25,12 @@ import sys
 import urllib.parse
 import urllib.request
 
-APP_URL = os.environ.get("PAPPUS_APP_URL", "http://127.0.0.1:8000").rstrip("/")
-DIALOG = os.environ.get("PAPPUS_DIALOG", "")
-TOKEN = os.environ.get("PAPPUS_MCP_TOKEN", "")
+APP_URL = os.environ.get("DANDELION_APP_URL", "http://127.0.0.1:8000").rstrip("/")
+DIALOG = os.environ.get("DANDELION_DIALOG", "")
+TOKEN = os.environ.get("DANDELION_MCP_TOKEN", "")
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_INFO = {"name": "pappus-cells", "version": "0.1.0"}
+SERVER_INFO = {"name": "dandelion-cells", "version": "0.1.0"}
 
 TOOLS = [
     {

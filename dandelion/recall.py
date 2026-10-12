@@ -184,7 +184,7 @@ def record_review(schedule: dict, dialog: str, today_ordinal: int,
 # ---- persistence (recall.json beside the dialogs store) ---------------------
 def default_schedule_path() -> Path:
     """Where the review schedule lives: ``recall.json`` under the same data root
-    as the dialogs (``PAPPUS_DATA``, else ``~/.config/pappus``).
+    as the dialogs (``DANDELION_DATA``, else ``~/.config/dandelion``).
     Mirrors `blog.default_blog_dir` — self-contained, no backend internals."""
     from .datadir import data_root
     return data_root() / "recall.json"

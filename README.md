@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="site/assets/logo-dark.svg">
-    <img alt="Pappus" src="site/assets/logo-light.svg" height="96">
+    <img alt="Dandelion" src="site/assets/logo-light.svg" height="96">
   </picture>
 </p>
 
@@ -29,18 +29,18 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="site/assets/shot-dark.jpg">
-    <img alt="A Pappus dialog: notes, a code cell, a matplotlib plot of Fourier partial sums, and the composer" src="site/assets/shot-light.jpg" width="880">
+    <img alt="A Dandelion dialog: notes, a code cell, a matplotlib plot of Fourier partial sums, and the composer" src="site/assets/shot-light.jpg" width="880">
   </picture><br>
   <em>The learner plotted the partial sums; the AI explains the overshoot they found.</em>
 </p>
 
-Pappus is a notebook where the AI is a thinking partner, not a ghostwriter. You
+Dandelion is a notebook where the AI is a thinking partner, not a ghostwriter. You
 work in small steps, writing and running every cell yourself, and the AI asks a
 guiding question or gives a hint when you need one. It looks like the Claude desktop app, runs on
 your laptop, and switches to a remote GPU from a dropdown without changing how you
 work.
 
-## Why Pappus
+## Why Dandelion
 
 - **The AI hints; you run the code.** In learning mode, the default, an answer is a
   nudge, not the finished solution. When you ask, it can edit a cell you can see
@@ -51,7 +51,7 @@ work.
   Jupyter keys. The AI sees the cells above your question, so "why is this slow?"
   gets a real answer.
 - **Yours, wherever it runs.** Notebooks, papers and libraries live in
-  `~/.config/pappus`, never in git, and the front end loads nothing from a CDN. The
+  `~/.config/dandelion`, never in git, and the front end loads nothing from a CDN. The
   same notebook runs against your laptop or an H100 through an SSH tunnel.
 
 ## Quick start
@@ -60,12 +60,12 @@ You need [uv](https://docs.astral.sh/uv/) and [just](https://github.com/casey/ju
 (`brew install uv just`).
 
 ```bash
-git clone https://github.com/slegroux/pappus.git && cd pappus
+git clone https://github.com/slegroux/pappus.git dandelion && cd dandelion
 uv sync --extra kernel --extra paper --extra web   # the app, the kernel's numpy/torch stack, PDF + web readers
 just start                                         # kernel on :5055, UI on http://localhost:8000
 ```
 
-`just stop` stops both, and `just app` builds a double-clickable `Pappus.app`.
+`just stop` stops both, and `just app` builds a double-clickable `Dandelion.app`.
 The LED in the top-right should be **green**: the UI has reached the kernel and code
 runs for real. **Amber** means it fell back to an in-memory demo; `just doctor`
 tells you why.
@@ -122,7 +122,7 @@ class Conv1d: ...
 ```
 
 ```bash
-uv run python -m pappus.cli library build audiolib ./audiolib   # nbdev tangles it into a package
+uv run python -m dandelion.cli library build audiolib ./audiolib   # nbdev tangles it into a package
 ```
 
 Click **Use in kernel**, and `import audiolib` works in any cell. Each generated
@@ -154,12 +154,12 @@ and tunnel it back. The URL stays on localhost, and the port never touches the
 public internet:
 
 ```bash
-uv run python -m pappus.cli up h100        # open the SSH tunnel
-uv run python -m pappus.cli doctor h100    # DNS, port, token, route: exactly what's broken
+uv run python -m dandelion.cli up h100        # open the SSH tunnel
+uv run python -m dandelion.cli doctor h100    # DNS, port, token, route: exactly what's broken
 ```
 
 Then switch targets from the dropdown in the top bar. Code runs on the bundled
-kernel server by default; with the `solveit` extra, Pappus can instead connect to a
+kernel server by default; with the `solveit` extra, Dandelion can instead connect to a
 SolveIt server through Answer.AI's `solveit_client`. See
 [the guide](docs/GUIDE.md#connect-a-real-server-right-now-no-proprietary-solveit-needed).
 
@@ -173,12 +173,12 @@ just dev      # kernel + UI in the foreground; Ctrl+C stops both
 
 | Path | What it is |
 |---|---|
-| `pappus/app.py` | The FastHTML UI: server-side rendering, htmx swaps |
-| `pappus/client.py` | One `connect()` over the bundled kernel, `solveit_client` and an in-memory mock |
+| `dandelion/app.py` | The FastHTML UI: server-side rendering, htmx swaps |
+| `dandelion/client.py` | One `connect()` over the bundled kernel, `solveit_client` and an in-memory mock |
 | `server/kernel_server.py` | The kernel server: execution, rich output, completion |
-| `pappus/claude_cli.py`, `codex_cli.py` | Ask AI over your Claude or ChatGPT subscription |
+| `dandelion/claude_cli.py`, `codex_cli.py` | Ask AI over your Claude or ChatGPT subscription |
 | `site/` | The [landing page](https://slegroux.github.io/pappus/) |
 
-> **Renamed from SolveIt Sidekick.** On first start, Pappus moves your data from
-> `~/.config/solveit-sidekick` to `~/.config/pappus` and leaves a link at the old
-> path. `SIDEKICK_*` settings still work as their `PAPPUS_*` equivalents.
+> **Renamed from SolveIt Sidekick.** On first start, Dandelion moves your data from
+> `~/.config/solveit-sidekick` to `~/.config/dandelion` and leaves a link at the old
+> path. `SIDEKICK_*` settings still work as their `DANDELION_*` equivalents.

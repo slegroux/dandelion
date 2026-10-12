@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Codex reads this file as the repository-specific operating guide for
-Pappus. It is the Codex-native counterpart to `CLAUDE.md`; keep the two
+Dandelion. It is the Codex-native counterpart to `CLAUDE.md`; keep the two
 in sync when changing project conventions.
 
 ## What this is
@@ -26,7 +26,7 @@ When modifying AI behavior, prompts, models, tools, or notebook-editing flows:
   whole tasks behind the user's back.
 - Keep visible cell editing separate from code execution: AI may edit cells only
   when explicitly asked; the user still runs code cells.
-- Treat `pappus/claude_cli.py` as the canonical home of the SolveIt persona,
+- Treat `dandelion/claude_cli.py` as the canonical home of the SolveIt persona,
   mode directives, diagram guidance, and cell-tool guidance. If adding or changing
   a provider, make it consume the same `system(context, mode)` contract unless
   there is a deliberate, documented reason not to.
@@ -45,7 +45,7 @@ just lint                                # uv run ruff check
 just dev                                 # kernel :5055 + UI :8000, foreground
 just start [reload]                      # background services; stop with just stop
 just doctor                              # diagnose the kernel target
-uv run python -m pappus.cli serve       # UI only; assumes kernel is already up
+uv run python -m dandelion.cli serve       # UI only; assumes kernel is already up
 ```
 
 The kernel server needs the coding stack:
@@ -63,13 +63,13 @@ offline with no live SolveIt server, subprocess, or network. Test files named
 
 ## Architecture map
 
-- `pappus/app.py` — FastHTML web app, routes, rendering, state, htmx/SSE wiring.
-- `pappus/static/js/*` — thin client-side behavior; vendored libraries are under
-  `pappus/static/vendor/`. Avoid CDNs.
-- `pappus/client.py` — backend abstraction and notebook context serialization.
-- `pappus/targets.py` / `targets.yaml` — local, kernel, and H100 target profiles.
-- `pappus/tunnel.py` — SSH tunnel lifecycle for remote targets.
-- `pappus/claude_cli.py` — subscription-backed Claude Code path plus the shared
+- `dandelion/app.py` — FastHTML web app, routes, rendering, state, htmx/SSE wiring.
+- `dandelion/static/js/*` — thin client-side behavior; vendored libraries are under
+  `dandelion/static/vendor/`. Avoid CDNs.
+- `dandelion/client.py` — backend abstraction and notebook context serialization.
+- `dandelion/targets.py` / `targets.yaml` — local, kernel, and H100 target profiles.
+- `dandelion/tunnel.py` — SSH tunnel lifecycle for remote targets.
+- `dandelion/claude_cli.py` — subscription-backed Claude Code path plus the shared
   SolveIt persona/prompt contract.
 - `server/kernel_server.py` — self-hostable SolveIt-compatible kernel server,
   provider API calls, code execution, rich outputs, completions, and
@@ -80,7 +80,7 @@ offline with no live SolveIt server, subprocess, or network. Test files named
 
 `pyproject.toml` deliberately separates dependency groups:
 
-- Base dependencies run Pappus itself: FastHTML, uvicorn, renderers, and AI SDKs.
+- Base dependencies run Dandelion itself: FastHTML, uvicorn, renderers, and AI SDKs.
 - `kernel` is the notebook coding environment: numpy/pandas/torch/etc.
 - Other extras include `paper`, `web`, `solveit`, `nbdev`, and `all`.
 
@@ -94,40 +94,40 @@ Ask AI has two implementation families:
 - API providers (`claude`, `glm`, `codex`) go through SDK/provider code in the
   kernel server.
 - The installed Codex CLI model (`codex-cli`, default) shells out through
-  `pappus/codex_cli.py`, using the user's current local `codex` auth/config. It
+  `dandelion/codex_cli.py`, using the user's current local `codex` auth/config. It
   should stay conservative: neutral scratch directory, read-only sandbox, streamed
   JSONL output, and the shared SolveIt persona wrapped into the prompt. When the
   web app has published its loopback token, it may use the same MCP cell-editing
   tools as Claude, but only for explicit visible notebook edits.
 - Subscription-backed Claude models (`claude-cli`; `claude-cli-fast`) shell out
-  through `pappus/claude_cli.py`.
+  through `dandelion/claude_cli.py`.
 
 The subscription path invokes a full Claude Code agent, so it must keep
 `Write`, `Edit`, and `Bash` disallowed by default. Its only notebook-editing powers
-should be the local MCP cell tools, guarded by `PAPPUS_CELL_TOOLS` and used only
+should be the local MCP cell tools, guarded by `DANDELION_CELL_TOOLS` and used only
 on explicit user request.
 
 Tool policy for the spawned Ask-AI assistant is configured in
-`~/.config/pappus/tools.json` via `pappus/tools_config.py`. Defaults
+`~/.config/dandelion/tools.json` via `dandelion/tools_config.py`. Defaults
 allow web research and deny hidden execution/editing.
 
 ## Data and secrets
 
 - User data never lives in the repo. Notebooks, papers, recall, libraries and
-  the blog project are local to each machine in `~/.config/pappus`
-  (override with `PAPPUS_DATA`), resolved only through `pappus/datadir.py`.
+  the blog project are local to each machine in `~/.config/dandelion`
+  (override with `DANDELION_DATA`), resolved only through `dandelion/datadir.py`.
   `data/` is the old in-repo location and is gitignored; never commit user data.
-- Move data between installs with `pappus backup` / `pappus restore`
+- Move data between installs with `dandelion backup` / `dandelion restore`
   (`just backup` / `just restore`); API keys are included only with `--with-secrets`.
 - API keys live outside the repo in
-  `~/.config/pappus/secrets.json` via `pappus/secrets_store.py`.
+  `~/.config/dandelion/secrets.json` via `dandelion/secrets_store.py`.
 - Environment variables override stored keys.
 - Never commit API keys, SolveIt tokens, cookies, or tunnel credentials.
 
 ## Library and blog generation
 
-`pappus/nbdev_export.py` and `pappus/libraries.py` generate packages from
-cells tagged `#| export lib:module`. `pappus/blog.py` and `pappus/export.py`
+`dandelion/nbdev_export.py` and `dandelion/libraries.py` generate packages from
+cells tagged `#| export lib:module`. `dandelion/blog.py` and `dandelion/export.py`
 project dialogs to Quarto/blog artifacts.
 
 Generated code and generated notebooks should not be hand-edited; edit the source
@@ -137,7 +137,7 @@ cells and rebuild.
 
 - Prefer existing patterns and small, reversible diffs.
 - Broad `except ... # noqa: BLE001` handlers are intentional graceful degradation
-  points; use `_dbg()` in `pappus/app.py` for diagnosability.
+  points; use `_dbg()` in `dandelion/app.py` for diagnosability.
 - Rendering is server-side and offline by design.
 - Keep security boundaries explicit: loopback-only internal routes, token/cookie
   checks for exposed kernel routes, sanitized rich output, and no `shell=True`
@@ -148,6 +148,6 @@ cells and rebuild.
 
 ## Known structural debt
 
-`pappus/app.py` and its cell-editing view are large. Refactor them only with a
+`dandelion/app.py` and its cell-editing view are large. Refactor them only with a
 plan and regression tests; do not mix broad structural cleanup with unrelated
 feature or security changes.

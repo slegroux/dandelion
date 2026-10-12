@@ -21,12 +21,12 @@ from .targets import Target, effective_default_model
 
 
 def _dbg(msg):
-    """Log to stderr only when PAPPUS_DEBUG is set, so the graceful-degradation
+    """Log to stderr only when DANDELION_DEBUG is set, so the graceful-degradation
     paths (mock fallback on connect) become diagnosable without changing default
     behavior. Mirrors app._dbg."""
-    if os.environ.get("PAPPUS_DEBUG"):
+    if os.environ.get("DANDELION_DEBUG"):
         import sys
-        print(f"[pappus] {msg}", file=sys.stderr)
+        print(f"[dandelion] {msg}", file=sys.stderr)
 
 
 def _fallback_model() -> str:
@@ -62,7 +62,7 @@ def _data_dir() -> Path:
 
 # Dialogs are saved per store key (the target name) as one JSON file, so your
 # notebook survives a restart — and survives the backend being rebuilt when you
-# save Settings or switch targets. Override the directory with PAPPUS_DATA.
+# save Settings or switch targets. Override the directory with DANDELION_DATA.
 #
 # Private dialogs can be kept out of the main store by listing their dialog names
 # in dialogs-<key>.private. Those cells are saved in dialogs-<key>.local.json;
@@ -89,8 +89,8 @@ _SAVE_LOCK = threading.RLock()
 # Timestamped copies of the store in <data root>/backups/, taken at most every
 # SNAPSHOT_MINUTES while you work, newest SNAPSHOT_KEEP kept. The rolling .bak
 # (previous save) alone can't help once a bad file has been saved over it.
-SNAPSHOT_MINUTES = float(os.environ.get("PAPPUS_SNAPSHOT_MINUTES", "15"))
-SNAPSHOT_KEEP = int(os.environ.get("PAPPUS_SNAPSHOT_KEEP", "20"))
+SNAPSHOT_MINUTES = float(os.environ.get("DANDELION_SNAPSHOT_MINUTES", "15"))
+SNAPSHOT_KEEP = int(os.environ.get("DANDELION_SNAPSHOT_KEEP", "20"))
 
 # Human-readable notes about recoveries, shown as a banner by the app.
 STORE_NOTICES: list[str] = []
@@ -165,7 +165,7 @@ def _recover_store(p: Path) -> dict:
     STORE_NOTICES.append(msg)
     _dbg(msg)
     import sys
-    print(f"[pappus] WARNING: {msg}", file=sys.stderr)
+    print(f"[dandelion] WARNING: {msg}", file=sys.stderr)
     return good
 
 
@@ -285,7 +285,7 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
                 local.unlink()
         except OSError as e:           # never let a disk hiccup break the app,
             import sys                 # but don't hide it either
-            print(f"[pappus] WARNING: could not save {p}: {e}", file=sys.stderr)
+            print(f"[dandelion] WARNING: could not save {p}: {e}", file=sys.stderr)
 
 
 def _rename_in(dialogs: dict, old: str, new: str) -> None:
@@ -300,14 +300,14 @@ def _rename_in(dialogs: dict, old: str, new: str) -> None:
 
 # ---- notebook context for the AI (mirrors SolveIt's to_xml semantics) -------
 # Tunables, env-overridable like the kernel server's other settings:
-#   PAPPUS_CTX_OUT_TRUNC  middle-out truncate each code/answer output to N chars
-#   PAPPUS_CTX_MAX_CHARS  total context budget; oldest cells drop first when over
+#   DANDELION_CTX_OUT_TRUNC  middle-out truncate each code/answer output to N chars
+#   DANDELION_CTX_MAX_CHARS  total context budget; oldest cells drop first when over
 def _ctx_limits(out_trunc: int | None, max_chars: int | None) -> tuple[int, int]:
     import os
     if out_trunc is None:
-        out_trunc = int(os.environ.get("PAPPUS_CTX_OUT_TRUNC", 2000))
+        out_trunc = int(os.environ.get("DANDELION_CTX_OUT_TRUNC", 2000))
     if max_chars is None:
-        max_chars = int(os.environ.get("PAPPUS_CTX_MAX_CHARS", 100_000))
+        max_chars = int(os.environ.get("DANDELION_CTX_MAX_CHARS", 100_000))
     return out_trunc, max_chars
 
 
@@ -892,6 +892,6 @@ def connect(target: Target) -> tuple[object, str | None]:
     except Exception as e:  # noqa: BLE001 — an *unexpected* error (e.g. a bug in a
         # backend __init__) shouldn't masquerade as a plain connection issue. Still
         # degrade so the UI stays usable, but name the type so it's diagnosable
-        # (and dump it under PAPPUS_DEBUG) instead of looking like "server down".
+        # (and dump it under DANDELION_DEBUG) instead of looking like "server down".
         _dbg(f"connect() unexpected {type(e).__name__}: {e}")
         return MockBackend(), f"{type(e).__name__}: {e}"

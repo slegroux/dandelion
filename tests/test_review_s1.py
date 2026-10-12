@@ -1,4 +1,4 @@
-"""S1: the large front-end JS/CSS blocks are extracted to pappus/static and
+"""S1: the large front-end JS/CSS blocks are extracted to dandelion/static and
 served from /static — a behaviour-preserving refactor.
 
 These tests lock byte-identity: the module-level constant, the file on disk, and
@@ -14,9 +14,9 @@ from starlette.testclient import TestClient
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-import pappus.app as app
+import dandelion.app as app
 
-STATIC_DIR = ROOT / "pappus" / "static"
+STATIC_DIR = ROOT / "dandelion" / "static"
 
 # (constant name, static url path). Only the pure-static, non-interpolated blocks
 # that are NOT re-delivered via htmx partial swaps were extracted.

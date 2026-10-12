@@ -1,8 +1,8 @@
-"""Which tools the pappus AI (the `claude -p` path) may use.
+"""Which tools the dandelion AI (the `claude -p` path) may use.
 
 One declarative place to control the Ask-AI agent's tools, instead of hardcoded
 lists in claude_cli. Stored as JSON:
-    $PAPPUS_TOOLS  (if set)  else  ~/.config/pappus/tools.json
+    $DANDELION_TOOLS  (if set)  else  ~/.config/dandelion/tools.json
 
     {
       "allow": ["WebSearch", "WebFetch"],   # tools the agent may call
@@ -29,10 +29,10 @@ DEFAULT_DENY = ["Write", "Edit", "Bash"]
 
 
 def tools_path() -> Path:
-    env = os.environ.get("PAPPUS_TOOLS")
+    env = os.environ.get("DANDELION_TOOLS")
     if env:
         return Path(env).expanduser()
-    return Path.home() / ".config" / "pappus" / "tools.json"
+    return Path.home() / ".config" / "dandelion" / "tools.json"
 
 
 def _read() -> dict:

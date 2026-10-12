@@ -1,8 +1,8 @@
-"""Pappus — a clean, Claude-desktop-style interface for SolveIt.
+"""Dandelion — a clean, Claude-desktop-style interface for SolveIt.
 
 Run:
     pip install python-fasthtml pyyaml solveit_client
-    python -m pappus.app          # then open http://localhost:8000
+    python -m dandelion.app          # then open http://localhost:8000
 
 The whole point: the target switcher in the top-right flips between your laptop
 ('local') and the H100 ('h100'). Everything else stays identical.
@@ -44,12 +44,12 @@ from .blog import _sanitize as _sanitize_rich
 
 
 def _dbg(msg):
-    """Log to stderr only when PAPPUS_DEBUG is truthy, so the broad
+    """Log to stderr only when DANDELION_DEBUG is truthy, so the broad
     `except ... # noqa: BLE001` handlers that silently degrade become
     diagnosable without changing default (flag-unset) behavior."""
-    if os.environ.get("PAPPUS_DEBUG"):
+    if os.environ.get("DANDELION_DEBUG"):
         import sys
-        print(f"[pappus] {msg}", file=sys.stderr)
+        print(f"[dandelion] {msg}", file=sys.stderr)
 
 
 # ---- code highlighting (server-side; works offline, no CDN) -----------------
@@ -286,8 +286,8 @@ def render_md(text: str):
 
 
 def _initial_target() -> str:
-    """Honor PAPPUS_TARGET / config default, falling back to the first target."""
-    t = get_target()  # resolves PAPPUS_TARGET env, then config 'default'
+    """Honor DANDELION_TARGET / config default, falling back to the first target."""
+    t = get_target()  # resolves DANDELION_TARGET env, then config 'default'
     return t.name
 
 # ---- app state (single-user prototype: module-level is fine) ----------------
@@ -452,10 +452,10 @@ def _init_cell_tools() -> None:
     MCP server that edits the live notebook (see claude_cli + server/mcp_cells).
     Loopback only, single-user: the token just stops other local procs poking in."""
     import secrets
-    os.environ.setdefault("PAPPUS_MCP_TOKEN", secrets.token_hex(16))
-    port = os.environ.get("PAPPUS_PORT", "8000")
-    os.environ.setdefault("PAPPUS_APP_URL", f"http://127.0.0.1:{port}")
-    STATE["mcp_token"] = os.environ["PAPPUS_MCP_TOKEN"]
+    os.environ.setdefault("DANDELION_MCP_TOKEN", secrets.token_hex(16))
+    port = os.environ.get("DANDELION_PORT", "8000")
+    os.environ.setdefault("DANDELION_APP_URL", f"http://127.0.0.1:{port}")
+    STATE["mcp_token"] = os.environ["DANDELION_MCP_TOKEN"]
 
 
 _init_cell_tools()
@@ -495,7 +495,7 @@ def use_target(name: str):
 
 def _ensure_target() -> None:
     """Resolve the configured target for real (config read + network probe),
-    once. Deferred out of import so `import pappus.app` does no network I/O and
+    once. Deferred out of import so `import dandelion.app` does no network I/O and
     doesn't require targets.yaml; run on app startup (see the startup hook below)."""
     if STATE.get("_target_ready"):
         return
@@ -514,7 +514,7 @@ except Exception:  # noqa: BLE001 — no config yet; resolved for real on startu
     _dbg("initial target unresolved at import; deferring to startup")
 
 # ---- bundled static assets (JS/CSS) ----------------------------------------
-# Large front-end JS/CSS blocks live as files under pappus/static and are
+# Large front-end JS/CSS blocks live as files under dandelion/static and are
 # served from /static (see the /static route). Their text is loaded back into
 # the module-level constants so they stay importable (tests) and so the file
 # served over HTTP is byte-identical to what the page references.
@@ -1290,15 +1290,15 @@ STREAM_JS = """
     // Cheap guard: only fetch the library when there's an unprocessed diagram.
     var scope = mermaidScope(el);
     if(!scope || !scope.querySelector('pre.mermaid:not([data-processed])')) return;
-    window.__pappusMermaidRenderQueued = true;
+    window.__dandelionMermaidRenderQueued = true;
     ensureMermaid().then(function(){ queueMermaidRender(scope); }).catch(function(err){
-      window.__pappusMermaidRenderQueued = false;
-      if(window.console && console.warn) console.warn('Pappus Mermaid load failed', err);
+      window.__dandelionMermaidRenderQueued = false;
+      if(window.console && console.warn) console.warn('Dandelion Mermaid load failed', err);
     });
   }
   var MERMAID_MAX_TRIES = 3;
   function mermaidWarn(err){
-    if(window.console && console.warn) console.warn('Pappus Mermaid render failed', err);
+    if(window.console && console.warn) console.warn('Dandelion Mermaid render failed', err);
   }
   // A node with no layout box (display:none ancestor / detached) can't be measured,
   // so mermaid collapses it — but that's not a real failure: every #stream swap
@@ -1328,8 +1328,8 @@ STREAM_JS = """
     if(err) mermaidWarn(err);
     nodes.forEach(function(n){
       if(mermaidRenderOk(n)) return;
-      if(n.__pappusMermaidSource) n.textContent = n.__pappusMermaidSource;
-      if((n.__pappusMermaidTries || 0) < MERMAID_MAX_TRIES){
+      if(n.__dandelionMermaidSource) n.textContent = n.__dandelionMermaidSource;
+      if((n.__dandelionMermaidTries || 0) < MERMAID_MAX_TRIES){
         n.removeAttribute('data-processed');
       } else {
         n.setAttribute('data-mermaid-error', 'true');
@@ -1343,8 +1343,8 @@ STREAM_JS = """
         if(mermaidRenderOk(n)) return;
         // A collapsed render left its (bad) svg in place; drop it back to source so
         // the re-render below starts clean rather than nesting svg-in-svg.
-        if((n.__pappusMermaidTries || 0) < MERMAID_MAX_TRIES){
-          if(n.__pappusMermaidSource) n.textContent = n.__pappusMermaidSource;
+        if((n.__dandelionMermaidTries || 0) < MERMAID_MAX_TRIES){
+          if(n.__dandelionMermaidSource) n.textContent = n.__dandelionMermaidSource;
           n.removeAttribute('data-processed');
         }
       });
@@ -1356,14 +1356,14 @@ STREAM_JS = """
     var base = row ? row.id : 'stream';
     var all = row ? row.querySelectorAll('pre.mermaid') : document.querySelectorAll('#stream pre.mermaid');
     var idx = Array.prototype.indexOf.call(all, n);
-    if(idx < 0) idx = window.__pappusMermaidAnonId = (window.__pappusMermaidAnonId || 0) + 1;
-    return ('pappus-mermaid-' + base + '-' + idx).replace(/[^A-Za-z0-9_-]/g, '-');
+    if(idx < 0) idx = window.__dandelionMermaidAnonId = (window.__dandelionMermaidAnonId || 0) + 1;
+    return ('dandelion-mermaid-' + base + '-' + idx).replace(/[^A-Za-z0-9_-]/g, '-');
   }
   function renderMermaidNode(n){
     if(!n || !window.mermaid) return Promise.resolve();
-    var src = n.__pappusMermaidSource || n.textContent || '';
-    n.__pappusMermaidSource = src;
-    n.__pappusMermaidTries = (n.__pappusMermaidTries || 0) + 1;
+    var src = n.__dandelionMermaidSource || n.textContent || '';
+    n.__dandelionMermaidSource = src;
+    n.__dandelionMermaidTries = (n.__dandelionMermaidTries || 0) + 1;
     n.setAttribute('data-processed', 'true');
     n.setAttribute('data-mermaid-id', mermaidNodeId(n));
     try {
@@ -1381,31 +1381,31 @@ STREAM_JS = """
     }
   }
   function queueMermaidRender(el){
-    window.__pappusMermaidRenderScope = mermaidScope(el);
-    if(window.__pappusMermaidRenderActive) return;
-    window.__pappusMermaidRenderActive = true;
+    window.__dandelionMermaidRenderScope = mermaidScope(el);
+    if(window.__dandelionMermaidRenderActive) return;
+    window.__dandelionMermaidRenderActive = true;
     var tick = window.requestAnimationFrame || function(fn){ setTimeout(fn, 0); };
     tick(function(){
-      var scope = window.__pappusMermaidRenderScope;
-      window.__pappusMermaidRenderScope = null;
-      var chain = window.__pappusMermaidRenderChain || Promise.resolve();
-      window.__pappusMermaidRenderChain = chain.then(function(){
-        window.__pappusMermaidRenderQueued = false;
+      var scope = window.__dandelionMermaidRenderScope;
+      window.__dandelionMermaidRenderScope = null;
+      var chain = window.__dandelionMermaidRenderChain || Promise.resolve();
+      window.__dandelionMermaidRenderChain = chain.then(function(){
+        window.__dandelionMermaidRenderQueued = false;
         if(!scope || scope.isConnected === false) scope = document.getElementById('stream');
         if(!scope || !scope.querySelector('pre.mermaid:not([data-processed])')) return null;
         return drawMermaid(scope);
       }, function(){
-        window.__pappusMermaidRenderQueued = false;
+        window.__dandelionMermaidRenderQueued = false;
         if(!scope || scope.isConnected === false) scope = document.getElementById('stream');
         if(!scope || !scope.querySelector('pre.mermaid:not([data-processed])')) return null;
         return drawMermaid(scope);
       }).then(function(){
-        window.__pappusMermaidRenderActive = false;
-        if(window.__pappusMermaidRenderScope) queueMermaidRender(window.__pappusMermaidRenderScope);
+        window.__dandelionMermaidRenderActive = false;
+        if(window.__dandelionMermaidRenderScope) queueMermaidRender(window.__dandelionMermaidRenderScope);
       }, function(err){
-        window.__pappusMermaidRenderActive = false;
+        window.__dandelionMermaidRenderActive = false;
         mermaidWarn(err);
-        if(window.__pappusMermaidRenderScope) queueMermaidRender(window.__pappusMermaidRenderScope);
+        if(window.__dandelionMermaidRenderScope) queueMermaidRender(window.__dandelionMermaidRenderScope);
       });
     });
   }
@@ -1457,7 +1457,7 @@ STREAM_JS = """
       window.__mermaidInit = true;
     }
     var nodes = Array.prototype.slice.call(el.querySelectorAll('pre.mermaid:not([data-processed])'))
-      .filter(function(n){ return (n.__pappusMermaidTries || 0) < MERMAID_MAX_TRIES; });
+      .filter(function(n){ return (n.__dandelionMermaidTries || 0) < MERMAID_MAX_TRIES; });
     if(!nodes.length) return Promise.resolve();
     return nodes.reduce(function(p, n){
       return p.then(function(){ return renderMermaidNode(n); });
@@ -1603,7 +1603,7 @@ STREAM_JS = """
   // #stream is rebuilt on each action. A section runs from a heading note down to
   // the next heading of the same-or-higher level (so a # folds its ## subsections).
   function _secKey(){ var s = document.getElementById('stream');
-    return 'pappus_collapsed_' + (s ? s.getAttribute('data-dialog') : ''); }
+    return 'dandelion_collapsed_' + (s ? s.getAttribute('data-dialog') : ''); }
   function _secLoad(){ try { return new Set(JSON.parse(localStorage.getItem(_secKey()) || '[]')); }
                        catch(e){ return new Set(); } }
   function _secSave(set){ try { localStorage.setItem(_secKey(), JSON.stringify(Array.from(set))); } catch(e){} }
@@ -1637,8 +1637,8 @@ STREAM_JS = """
   };
   window.__applyCollapsed();
 
-  if(window.__pappusCells) return;                            // bind document listeners once
-  window.__pappusCells = true;
+  if(window.__dandelionCells) return;                            // bind document listeners once
+  window.__dandelionCells = true;
   // Highlighting text is for copy/paste — it must NOT open the editor. A drag to
   // select ends with a click, which htmx's click-to-edit (.clickedit hx-get)
   // would fire, swapping in the editor and discarding the selection. Guard it in
@@ -2109,7 +2109,7 @@ def SettingsPage(saved=False):
                    check_cmd="claude auth status",
                    install_hint="Install Claude Code (claude.com/claude-code), then sign in with: claude auth login",
                    used_by="the “Claude · Fable / Sonnet / Opus” models",
-                   note=("Pappus hides ANTHROPIC_API_KEY from these calls, so they always use "
+                   note=("Dandelion hides ANTHROPIC_API_KEY from these calls, so they always use "
                          "your plan and never bill API credits.") if signed_in_claude and on_plan else "",
                    extra=("If Ask AI reports an expired session, run claude auth login."
                           if signed_in_claude else "")),
@@ -2149,7 +2149,7 @@ def SettingsPage(saved=False):
         ("API key (billed per token)", _opts(lambda i: not _is_subscription_model(i)))) if opts]
 
     return Html(
-        Head(Title("Settings · Pappus"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
+        Head(Title("Settings · Dandelion"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
         Body(Div(
             Div(
                 Div(A("←  Back", href="/", cls="back"), Div("Settings", cls="title"),
@@ -2252,7 +2252,7 @@ def LibrariesPage(result=None, saved=False):
         Button("Add library", cls="save-btn", type="submit"),
         method="post", action="/library/add")
     return Html(
-        Head(Title("Libraries · Pappus"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
+        Head(Title("Libraries · Dandelion"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
         Body(Div(
             Div(
                 Div(A("←  Back", href="/", cls="back"), Div("Libraries", cls="title"),
@@ -2262,7 +2262,7 @@ def LibrariesPage(result=None, saved=False):
                      "SolveIt backend can't enumerate dialogs yet).", cls="banner")
                  if live_cliff else ""),
                 _lib_result_banner(result),
-                Div("Build a Python library from cells tagged across your dialogs. Pappus "
+                Div("Build a Python library from cells tagged across your dialogs. Dandelion "
                     "projects them into an nbdev project; nbdev builds the package. See the "
                     "design note for the model.", cls="settings-intro"),
                 *cards,
@@ -2334,7 +2334,7 @@ def PaperPanel():
             menu_cls="paper-import-menu"))
         # collapse just the paper text — the header (incl. Import) stays put
         actions.append(Span("▾", cls="gear paper-toggle", title="Show/hide the paper text",
-                            onclick="toggleCol('paper-collapsed','pappus_paperhidden')"))
+                            onclick="toggleCol('paper-collapsed','dandelion_paperhidden')"))
     actions.append(A("✕", href="/paper/close", cls="gear", title="Close paper"))
     head = Div(Span(p["name"], cls="paper-name"), Div(*actions, cls="paper-actions"),
                cls="paper-head")
@@ -2442,32 +2442,32 @@ def Page():
         # body content itself.
         # app.hdrs carries everything (htmx + CodeMirror + KaTeX + Sortable),
         # all served locally from /vendor — see _LOCAL_HDRS. Fully offline.
-        Head(Title("Pappus"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
+        Head(Title("Dandelion"), *app.hdrs, Link(rel="stylesheet", href="/static/css/app.css")),
         Body(Div(
             # global top bar — above all columns, so its toggles stay reachable
             # even when the dialogs panel is hidden.
             Div(
                 Div(A(Span(NotStr(_MARK_SVG), cls="mark", aria_hidden="true"),
-                      Span("Pappus", cls="name"), href="/", cls="brand top-brand", title="Pappus"),
+                      Span("Dandelion", cls="name"), href="/", cls="brand top-brand", title="Dandelion"),
                     Span(_icon("panel"), cls="gear tgl icon-btn", id="tgl-side", role="button", tabindex="0",
                          aria_label="Toggle dialogs panel",
                          title="Show/hide the dialogs panel",
-                         onclick="toggleCol('no-side','pappus_noside')"),
+                         onclick="toggleCol('no-side','dandelion_noside')"),
                     # paper open → show/hide toggle; closed but this dialog
                     # remembers its source → reopen it (see /paper/reopen)
                     (Span(_icon("book"), cls="gear tgl icon-btn", id="tgl-paper", role="button", tabindex="0",
                           aria_label="Toggle paper viewer",
                           title="Show/hide the paper (PDF / markdown) viewer",
-                          onclick="toggleCol('no-paper','pappus_nopaper')")
+                          onclick="toggleCol('no-paper','dandelion_nopaper')")
                      if STATE.get("paper") else
                      (A(_icon("book"), href="/paper/reopen", cls="gear tgl icon-btn", id="tgl-paper",
                         title="Reopen this dialog's paper",
-                        onclick="try{localStorage.removeItem('pappus_nopaper')}catch(e){}")
+                        onclick="try{localStorage.removeItem('dandelion_nopaper')}catch(e){}")
                       if _paper_source_for(cur("dialog")) else None)),
                     Span(_icon("toc"), cls="gear tgl toc-toggle icon-btn", id="tgl-toc", role="button", tabindex="0",
                          aria_label="Toggle table of contents",
                          title="Show/hide the table of contents",
-                         onclick="toggleCol('toc-open','pappus_toc')"),
+                         onclick="toggleCol('toc-open','dandelion_toc')"),
                     TitleEditor(),
                     cls="topbar-left"),
                 Div(Details(
@@ -2479,7 +2479,7 @@ def Page():
                             # This triggers the native dialog reliably everywhere.
                             Input(type="file", name="pdf", id="pdfPick",
                                   accept="application/pdf,.pdf", cls="paper-file",
-                                  onchange="try{localStorage.removeItem('pappus_nopaper')}catch(e){};this.form.submit()"),
+                                  onchange="try{localStorage.removeItem('dandelion_nopaper')}catch(e){};this.form.submit()"),
                             Button("Choose a PDF…", type="button", cls="src-file-label",
                                    onclick="document.getElementById('pdfPick').click()"),
                             Span("or a web page / blog", cls="ins-col-head"),
@@ -2491,16 +2491,16 @@ def Page():
                             Button("Open URL", cls="cell-btn run", type="submit"),
                             # or a file already on disk — opened in place by its path
                             # (no re-upload). Confined to home / the papers cache /
-                            # $PAPPUS_PAPER_DIR by _paper_path_allowed.
+                            # $DANDELION_PAPER_DIR by _paper_path_allowed.
                             Span("or a file on this machine", cls="ins-col-head"),
                             Input(name="path", type="text",
                                   placeholder="~/papers/attention.pdf", cls="src-url",
                                   title="Open a PDF already on disk by its path (under your "
-                                        "home dir, the papers cache, or $PAPPUS_PAPER_DIR)"),
+                                        "home dir, the papers cache, or $DANDELION_PAPER_DIR)"),
                             Button("Open file", cls="cell-btn run", type="submit"),
                             method="post", action="/paper/open", enctype="multipart/form-data",
                             cls="src-form",
-                            onsubmit="try{localStorage.removeItem('pappus_nopaper')}catch(e){}"),
+                            onsubmit="try{localStorage.removeItem('dandelion_nopaper')}catch(e){}"),
                         cls="export"),
                     Details(Summary(_icon("download"), cls="gear icon-btn", title="Export this dialog"),
                             Div(A("Jupyter notebook (.ipynb)", href="/export/ipynb"),
@@ -2545,19 +2545,19 @@ def Page():
 
 
 # ---- export (.ipynb / .md) --------------------------------------------------
-# The pure notebook/markdown serializers live in pappus.export_nb (no app
+# The pure notebook/markdown serializers live in dandelion.export_nb (no app
 # state). Re-exported here so existing references (incl. tests using app.to_ipynb
 # / app.to_markdown) keep resolving.
 from .export_nb import to_ipynb, to_markdown  # noqa: E402,F401
 
 
 # ---- routes -----------------------------------------------------------------
-# All front-end assets are vendored under pappus/static/vendor and served from
+# All front-end assets are vendored under dandelion/static/vendor and served from
 # /vendor, so the app is fully offline — no CDN. This REPLACES FastHTML's default
 # CDN headers (default_hdrs=False): local htmx + fasthtml.js, then CodeMirror,
 # KaTeX, and Sortable.
 _VENDOR_DIR = Path(__file__).parent / "static" / "vendor"
-# The Pappus mark, inlined so its strands follow the theme's ink (currentColor).
+# The Dandelion mark, inlined so its strands follow the theme's ink (currentColor).
 # A missing file costs the logo, never the import.
 try:
     _MARK_SVG = (Path(__file__).parent / "static" / "img" / "mark.svg").read_text()
@@ -2600,17 +2600,17 @@ app.routes[:] = [r for r in app.routes if getattr(r, "path", "") != "/{fname:pat
 # The app executes code on the box it runs on and has no auth layer, so every
 # request must originate from loopback. The PRIMARY gate is the real TCP peer
 # address (scope["client"]), which the client cannot forge — so even if the app
-# is bound to 0.0.0.0 by a raw `uvicorn pappus.app:app --host 0.0.0.0` (the CLI
+# is bound to 0.0.0.0 by a raw `uvicorn dandelion.app:app --host 0.0.0.0` (the CLI
 # refuses this, but the ASGI app can be run directly), a remote box is rejected.
 # The Host/Sec-Fetch/Origin checks below remain as defense-in-depth against a
 # malicious local web page driving the POST routes cross-origin; they are NOT the
 # authentication (the Host header is client-controlled and must never be trusted
 # for that — the reason this gate exists).
 # Extra Host values accepted for the defense-in-depth Host check, e.g. a Tailscale
-# MagicDNS name when the UI is fronted by `tailscale serve` (see PAPPUS_TRUST_TAILNET
+# MagicDNS name when the UI is fronted by `tailscale serve` (see DANDELION_TRUST_TAILNET
 # below for why the peer gate also has to be widened). Comma-separated.
 _EXTRA_ALLOWED_HOSTS = frozenset(
-    h.strip().lower() for h in os.environ.get("PAPPUS_ALLOWED_HOSTS", "").split(",") if h.strip()
+    h.strip().lower() for h in os.environ.get("DANDELION_ALLOWED_HOSTS", "").split(",") if h.strip()
 )
 _ALLOWED_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "testserver"}) | _EXTRA_ALLOWED_HOSTS
 # Real peer addresses that count as loopback. "testclient" is what Starlette's
@@ -2626,13 +2626,13 @@ _LOOPBACK_PEERS = frozenset({"127.0.0.1", "::1", "testclient"})
 # drive the code-executing app" from loopback-only to any node on your tailnet, so it
 # is OFF by default; Tailscale ACLs then govern who is on the tailnet. The app still
 # binds to 127.0.0.1, so a tailnet peer can only ever arrive via `tailscale serve`.
-_TRUST_TAILNET = os.environ.get("PAPPUS_TRUST_TAILNET", "").strip().lower() in ("1", "true", "yes", "on")
+_TRUST_TAILNET = os.environ.get("DANDELION_TRUST_TAILNET", "").strip().lower() in ("1", "true", "yes", "on")
 _TAILNET_NETS = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
 
 
 def _peer_ok(peer: str | None) -> bool:
     """True if this TCP peer may drive the app: always loopback; tailnet ranges too
-    when PAPPUS_TRUST_TAILNET is set (for `tailscale serve` on macOS)."""
+    when DANDELION_TRUST_TAILNET is set (for `tailscale serve` on macOS)."""
     if peer in _LOOPBACK_PEERS:
         return True
     if not _TRUST_TAILNET or not peer:
@@ -2776,7 +2776,7 @@ def vendor(fname: str):
 
 @rt("/static/{fname:path}")
 def static(fname: str):
-    """Serve a bundled JS/CSS asset from pappus/static (path-traversal guarded)."""
+    """Serve a bundled JS/CSS asset from dandelion/static (path-traversal guarded)."""
     from starlette.responses import FileResponse, PlainTextResponse
     p = (_STATIC_DIR / fname).resolve()
     if p.is_relative_to(_STATIC_DIR.resolve()) and p.is_file():
@@ -3375,7 +3375,7 @@ def _loopback_req(request) -> bool:
     """True when the request comes from loopback. The /internal/* routes mutate the
     live notebook; the shared token is a second factor, not the only one, so they
     must stay unreachable off-box even when the UI is bound to 0.0.0.0
-    (PAPPUS_HOST). If we can't determine the client (no request), fail closed."""
+    (DANDELION_HOST). If we can't determine the client (no request), fail closed."""
     client = getattr(request, "client", None) if request is not None else None
     host = getattr(client, "host", "") if client is not None else None
     return host in ("127.0.0.1", "::1", "localhost", "")
@@ -3841,7 +3841,7 @@ def publish_blog():
     from . import blog
     dialog = cur("dialog")
     result = blog.publish_dialog(STATE["backend"], dialog, blog.default_blog_dir(),
-                                 title="Pappus Blog", date=date.today().isoformat())
+                                 title="Dandelion Blog", date=date.today().isoformat())
     if not result["render_ok"]:
         set_cur("flash", f"Post written to {blog.default_blog_dir()} — {result['render_detail']}")
         return RedirectResponse("/", status_code=303)
@@ -3979,11 +3979,11 @@ def _paper_path_allowed(src: str) -> bool:
     """Whether a server-side `path` may be opened. The UI opens papers by upload or
     URL; this `path` entry is for callers/tests, and an unrestricted local-file read
     is a disclosure primitive (esp. if the loopback gate is ever bypassed). Confine
-    it to the user's home, the papers cache, or PAPPUS_PAPER_DIR — resolved, so
+    it to the user's home, the papers cache, or DANDELION_PAPER_DIR — resolved, so
     `..`/symlinks can't escape."""
     from pathlib import Path
     bases = [Path.home()]
-    extra = os.environ.get("PAPPUS_PAPER_DIR")
+    extra = os.environ.get("DANDELION_PAPER_DIR")
     if extra:
         bases.append(Path(extra).expanduser())
     try:
@@ -4052,7 +4052,7 @@ def paper_open(pdf: UploadFile = None, path: str = "", url: str = ""):
                                   "engine": "error",
                                   "md": f"**Refused:** `{src}` is outside the allowed "
                                         f"directory (home, the papers cache, or "
-                                        f"$PAPPUS_PAPER_DIR)."}
+                                        f"$DANDELION_PAPER_DIR)."}
         elif not os.path.exists(src):
             with _STATE_LOCK:
                 STATE["paper"] = {"name": os.path.basename(src) or src, "status": "ready",
