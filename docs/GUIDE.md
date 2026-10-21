@@ -9,6 +9,7 @@ version, see the [README](../README.md).
 - [Setup](#setup)
 - [The bundled kernel server](#the-bundled-kernel-server)
   - [Run it like a Mac app](#run-it-like-a-mac-app)
+  - [How cells run, compared with Jupyter](#how-cells-run-compared-with-jupyter)
   - [Connecting to a SolveIt server](#connecting-to-a-solveit-server)
 - [Two dependency groups: the server vs your coding stack](#two-dependency-groups-the-server-vs-your-coding-stack)
 - [Models & API keys](#models--api-keys)
@@ -162,6 +163,32 @@ tunnels it back.
 > `127.0.0.1` and reaches it through the SSH tunnel, so no token is needed; only
 > pass `--token` if you expose the port directly. Likewise, the UI server binds
 > `127.0.0.1` by default — set `DANDELION_HOST=0.0.0.0` to expose the UI on your LAN.
+
+### How cells run, compared with Jupyter
+
+The bundled kernel is not IPython. It runs each cell with Python's own `exec()`,
+in the dialog's namespace, and code written for Jupyter mostly works, with these
+differences:
+
+| | Jupyter (ipykernel) | Dandelion's bundled kernel |
+|---|---|---|
+| Where a cell runs | IPython, on the kernel's main thread | `exec()` on a worker thread, one per run; never the main thread |
+| What shows inline | the last expression, and `display()` anywhere in a cell | the last expression's value, plus any open matplotlib figures; there is no `display()` |
+| Rich output | the IPython display protocol, ipywidgets | `_repr_png_`, `_repr_jpeg_`, `_repr_svg_`, `_repr_html_`, plus `_repr_audio_wav_` for sound (Dandelion's own hook) |
+| Sound | `IPython.display.Audio` (rendered as HTML) | an object whose `_repr_audio_wav_` returns a base64 WAV |
+| Magics, `!shell`, top-level `await` | yes | no |
+| Stop | an interrupt signal to the main thread | a `KeyboardInterrupt` raised in the cell's thread; it lands at the next Python step, so a call blocked inside C code finishes first |
+
+What this means for your code:
+
+- **Return what you want shown** as the cell's last line, rather than calling `display()`.
+- **Libraries that need the main thread** (macOS windows and GUI toolkits) can't
+  open a window from a cell. Run that work in a separate process and bring the
+  result back.
+- **Long waits stay stoppable** if they poll in short steps (`queue.get(timeout=0.1)`
+  in a loop) instead of one long blocking call.
+
+This describes the bundled `kernel` backend. A SolveIt server runs cells its own way.
 
 ### Connecting to a SolveIt server
 
