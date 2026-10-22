@@ -145,3 +145,42 @@ def test_route_nul_in_dest_flashes(monkeypatch):
     r = TestClient(app.app).post("/export/folder", data={"dest": "/tmp/a\x00b"},
                                  follow_redirects=False)
     assert r.status_code == 303 and "Couldn't write" in flashes[0]
+
+
+def _route(monkeypatch, picker, client=("testclient", 50000)):
+    """POST /export/folder with no dest, the OS picker replaced by `picker`."""
+    import dandelion.app as app
+    from starlette.testclient import TestClient
+    monkeypatch.setitem(app.STATE, "backend", type("B", (), {"messages": lambda s, d: _msgs()})())
+    flashes = []
+    monkeypatch.setattr(app, "set_cur", lambda k, v: flashes.append(v))
+    monkeypatch.setattr(app, "_choose_folder", picker)
+    r = TestClient(app.app, client=client).post("/export/folder", data={}, follow_redirects=False)
+    return r, flashes
+
+
+def test_route_without_dest_exports_into_the_folder_the_picker_returns(monkeypatch, tmp_path):
+    r, flashes = _route(monkeypatch, lambda: str(tmp_path / "chosen"))
+    assert r.status_code == 303 and flashes[0].startswith("Exported to")
+    assert list((tmp_path / "chosen").glob("*.md")) and list((tmp_path / "chosen").glob("*_files/*.png"))
+
+
+def test_cancelling_the_picker_writes_and_says_nothing(monkeypatch, tmp_path):
+    r, flashes = _route(monkeypatch, lambda: "")
+    assert r.status_code == 303 and flashes == []
+
+
+def test_picker_failure_flashes_the_reason(monkeypatch):
+    def picker():
+        raise ValueError("the folder picker needs macOS")
+    r, flashes = _route(monkeypatch, picker)
+    assert "needs macOS" in flashes[0]
+
+
+def test_remote_peer_never_opens_the_picker(monkeypatch):
+    import dandelion.app as app
+    monkeypatch.setattr(app, "_TRUST_TAILNET", True)      # a tailnet peer passes the guard...
+    called = []
+    r, flashes = _route(monkeypatch, lambda: called.append(1) or "/tmp/x",
+                        client=("100.64.0.5", 50000))     # ...but must not get a dialog here
+    assert called == [] and "machine running Dandelion" in flashes[0]
