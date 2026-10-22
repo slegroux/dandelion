@@ -126,22 +126,25 @@ window.__askComposer = function(text){
       cycleMode(e.shiftKey ? -1 : 1);
       return;
     }
-    if((e.key === 'ArrowUp' || e.key === 'ArrowDown') && askHistory &&
+    if((e.key === 'ArrowUp' || e.key === 'ArrowDown') && askHistory && !e.isComposing &&
        !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey &&
        document.getElementById('msgType').value === 'prompt' &&
        ta.selectionStart === ta.selectionEnd){
-      // Shell-style recall, only when the caret is on the first (Up) / last (Down)
-      // line; elsewhere the arrow moves within a multi-line prompt as usual.
+      // Shell-style recall. Empty / unedited-recalled text recalls at once; otherwise
+      // the browser moves the caret first, and we recall only if it couldn't move
+      // (already at the top/bottom visual line — wrapped lines count, not just \n).
       var up = (e.key === 'ArrowUp');
-      var edge = up ? ta.value.slice(0, ta.selectionStart) : ta.value.slice(ta.selectionEnd);
-      if(edge.indexOf('\n') === -1){
+      var recall = function(){
         var t = up ? askHistory.older(ta.value) : askHistory.newer(ta.value);
-        if(t !== null){
-          e.preventDefault();
-          ta.value = t;
-          ta.setSelectionRange(t.length, t.length);
-          if(window.__growComposer) window.__growComposer();
-        }
+        if(t === null) return;
+        ta.value = t;
+        ta.setSelectionRange(t.length, t.length);
+        if(window.__growComposer) window.__growComposer();
+      };
+      if(askHistory.immediate(ta.value)){ e.preventDefault(); recall(); }
+      else {
+        var before = ta.selectionStart;
+        setTimeout(function(){ if(ta.selectionStart === before) recall(); }, 0);
       }
       return;
     }

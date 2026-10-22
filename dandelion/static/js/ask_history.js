@@ -39,6 +39,11 @@ window.AskHistory = function(storage){
       idx++;
       return entries[idx];
     },
-    reset: function(){ idx = -1; }
+    reset: function(){ idx = -1; },
+    // Recall right away (no caret check)? Empty text, or still the unedited entry
+    // last recalled — so walking through history is one press per entry.
+    immediate: function(current){
+      return current === '' || (idx !== -1 && current === entries[idx]);
+    }
   };
 };
