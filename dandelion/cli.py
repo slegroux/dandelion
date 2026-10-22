@@ -220,7 +220,18 @@ def cmd_serve(_):
             "Use an SSH tunnel for remote access (see the comment in cli.py).")
     if not _move_out_of_repo():
         raise SystemExit("not starting: stop the older server first (see above)")
-    from .datadir import mark_serving
+    from .datadir import data_root, mark_serving, running_server_pid
+    other = running_server_pid()
+    if other:
+        # Each server keeps every dialog in memory and rewrites the whole dialogs
+        # file on save, so two on one folder drop each other's new dialogs.
+        raise SystemExit(
+            f"refusing to start: another Dandelion server (pid {other}) already serves "
+            f"{data_root()}. Two servers on one data folder overwrite each other's "
+            "dialogs. Stop the other one (just stop, or kill " f"{other}), or run this "
+            "one on its own copy of the data, e.g. "
+            "DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 "
+            "uv run python -m dandelion.cli serve")
     mark_serving()
     if reload:
         uvicorn.run("dandelion.app:app", host=host, port=port,

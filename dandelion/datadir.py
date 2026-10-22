@@ -315,13 +315,28 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _looks_like_dandelion(pid: int) -> bool:
+    """Whether `pid`'s command line mentions dandelion, so a stale pid file whose
+    pid the OS reused for an unrelated process doesn't count as a server. If ps
+    can't answer (missing, failing, timing out), assume it does."""
+    import subprocess
+    try:
+        r = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                           check=False, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if r.returncode != 0 or not r.stdout.strip():
+        return True
+    return "dandelion" in r.stdout.lower()
+
+
 def running_server_pid(root: Path | None = None) -> int | None:
     """PID of a live `dandelion serve` using this data root (or `root`), else None."""
     try:
         pid = int(((root / ".serve.pid") if root else _pidfile()).read_text().strip())
     except (OSError, ValueError):
         return None
-    return pid if pid != os.getpid() and _pid_alive(pid) else None
+    return pid if pid != os.getpid() and _pid_alive(pid) and _looks_like_dandelion(pid) else None
 
 
 class AppRunning(RuntimeError):

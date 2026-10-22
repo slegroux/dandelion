@@ -341,6 +341,7 @@ def _old_root(tmp_path, name="pappus"):
 def test_adopt_refuses_while_an_old_server_runs_there(tmp_path, monkeypatch):
     monkeypatch.delenv("DANDELION_DATA", raising=False)
     old = _old_root(tmp_path)
+    monkeypatch.setattr(datadir, "_looks_like_dandelion", lambda pid: True)
     (old / ".serve.pid").write_text(str(os.getppid()))            # alive, and not us
     with pytest.raises(datadir.LegacyAppRunning) as e:
         datadir.adopt_legacy_root(home=tmp_path)
@@ -356,6 +357,7 @@ def test_serve_refuses_while_an_old_server_runs(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("DANDELION_DATA", raising=False)
     monkeypatch.setenv("DANDELION_HOST", "127.0.0.1")
     old = _old_root(tmp_path / "home")
+    monkeypatch.setattr(datadir, "_looks_like_dandelion", lambda pid: True)
     (old / ".serve.pid").write_text(str(os.getppid()))
     monkeypatch.setattr(datadir, "migrate_repo_data", lambda old=None: [])
     monkeypatch.setattr(datadir, "leftovers", lambda old=None: [])
