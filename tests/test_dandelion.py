@@ -1481,7 +1481,7 @@ def test_stream_path_resolves_injection_before_reaching_ai(monkeypatch):
     m = b.add("inj/stream", "what is $`x`?", "prompt", model="claude-opus-high")
 
     seen = {}
-    def fake_stream(dialog, content, context, model=None, mode=None):
+    def fake_stream(dialog, content, context, model=None, mode=None, **_):
         seen["content"] = content                          # capture what the AI receives
         return iter(())                                    # no tokens
     monkeypatch.setattr(app, "stream_claude", fake_stream)
@@ -1707,7 +1707,7 @@ def test_stream_route_emits_deltas_and_persists_output(monkeypatch):
     b.messages("stream/route")
     m = b.add("stream/route", "add x and y?", "prompt", model="claude-opus-high")
     app.STATE["pending_stream"] = ("stream/route", m.id)
-    monkeypatch.setattr(app, "stream_claude", lambda d, c, ctx, model=None, mode=None: iter(["4", "2"]))
+    monkeypatch.setattr(app, "stream_claude", lambda d, c, ctx, model=None, mode=None, **_: iter(["4", "2"]))
 
     resp = app.stream_answer(dialog="stream/route", id=m.id)
 
