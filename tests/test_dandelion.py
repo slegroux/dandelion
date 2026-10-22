@@ -727,7 +727,7 @@ def test_claude_cli_fresh_session_sends_full_context(monkeypatch):
     assert cmd[cmd.index("--setting-sources") + 1] == "project"
     assert cc.CLI_SESSIONS["cli/d1"] == {
         "id": "sid-1", "sent": "<code>x=1</code>", "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": [], "sent_notes": []}
 
 
 def test_claude_cli_appended_cells_resume_with_only_the_delta(monkeypatch):
@@ -763,7 +763,7 @@ def test_claude_cli_edit_above_starts_a_fresh_session(monkeypatch):
     assert "--session-id" in cmd and "--resume" not in cmd      # reset, not resumed
     assert cc.CLI_SESSIONS["cli/d3"] == {
         "id": "sid-new", "sent": edited, "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": [], "sent_notes": []}
 
 
 # ---- AI modes (learning / concise / standard personas) ---------------------
@@ -1247,7 +1247,7 @@ def test_claude_cli_stream_yields_deltas_and_records_session(monkeypatch):
     assert "stream-json" in cmd and "--session-id" in cmd   # streaming, fresh session
     assert cc.CLI_SESSIONS["cli/s1"] == {
         "id": "sid-s1", "sent": "<code>x=1</code>", "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": [], "sent_notes": []}
 
 
 def test_claude_cli_stream_resumes_on_append(monkeypatch):
@@ -1481,7 +1481,7 @@ def test_stream_path_resolves_injection_before_reaching_ai(monkeypatch):
     m = b.add("inj/stream", "what is $`x`?", "prompt", model="claude-opus-high")
 
     seen = {}
-    def fake_stream(dialog, content, context, model=None, mode=None):
+    def fake_stream(dialog, content, context, model=None, mode=None, **_):
         seen["content"] = content                          # capture what the AI receives
         return iter(())                                    # no tokens
     monkeypatch.setattr(app, "stream_claude", fake_stream)
@@ -1707,7 +1707,7 @@ def test_stream_route_emits_deltas_and_persists_output(monkeypatch):
     b.messages("stream/route")
     m = b.add("stream/route", "add x and y?", "prompt", model="claude-opus-high")
     app.STATE["pending_stream"] = ("stream/route", m.id)
-    monkeypatch.setattr(app, "stream_claude", lambda d, c, ctx, model=None, mode=None: iter(["4", "2"]))
+    monkeypatch.setattr(app, "stream_claude", lambda d, c, ctx, model=None, mode=None, **_: iter(["4", "2"]))
 
     resp = app.stream_answer(dialog="stream/route", id=m.id)
 
@@ -2769,7 +2769,7 @@ def test_build_cmd_resume_edit_previous_cell_reminds_tool_use(monkeypatch):
     context = '<code n="1" id="_prev">x = 1</code>'
     cc.CLI_SESSIONS["mcp/edit-prev"] = {
         "id": "sid-9", "sent": context, "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": [], "sent_notes": []}
     monkeypatch.setenv("DANDELION_MCP_TOKEN", "t")
     monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
     monkeypatch.delenv("DANDELION_CELL_TOOLS", raising=False)

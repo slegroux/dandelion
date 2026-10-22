@@ -238,7 +238,7 @@ def _resume_args(codex: str, stream: bool) -> list[str]:
 
 def _build_cmd_info(dialog: str, content: str, context: str = "",
                     mode: str | None = None, stream: bool = False,
-                    model_id: str | None = None) -> _Cmd | None:
+                    model_id: str | None = None, image_note: str = "") -> _Cmd | None:
     codex = codex_bin()
     if not codex:
         return None
@@ -258,6 +258,8 @@ def _build_cmd_info(dialog: str, content: str, context: str = "",
         cmd += ["--model", model]
     if effort:
         cmd += ["-c", f"model_reasoning_effort={_toml(effort)}"]
+    if image_note:                           # the Codex route can't carry images: say so
+        content += f"\n\n({image_note})"
     prompt = (_delta_prompt(content, context, str(st.get("sent", "")))
               if resume else _prompt(content, context, mode, tools=tools))
     if resume and tools and _wants_cell_edit(content):
@@ -375,9 +377,10 @@ def call(dialog: str, content: str, context: str = "", model: str | None = None,
 
 
 def stream(dialog: str, content: str, context: str = "", model: str | None = None,
-           mode: str | None = None):
+           mode: str | None = None, image_note: str = ""):
     """Yield Codex CLI assistant text as it appears in `codex exec --json` output."""
-    info = _build_cmd_info(dialog, content, context, mode, stream=True, model_id=model)
+    info = _build_cmd_info(dialog, content, context, mode, stream=True, model_id=model,
+                           image_note=image_note)
     if info is None:
         yield MISSING
         return

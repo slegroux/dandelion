@@ -240,6 +240,15 @@ keys for the direct SDK providers — Anthropic (Claude) and Zhipu (GLM). Keys a
 `~/.config/dandelion/secrets.json` (chmod 600, gitignored); an environment
 variable of the same name always overrides the file.
 
+### Which models see images
+
+Plots and other image outputs reach the AI on the **Claude CLI** models only: up
+to the 5 newest (or pinned) PNG or JPEG outputs, each at most 8000 px and 3.5 MB;
+SVG is skipped. Mute and Pin work as they do for text. The **Codex CLI** is
+text-only: it sees the code and text around an image but not the image, and the
+reply starts with a one-line note saying how many were not sent. The Claude API
+and GLM models are text-only too, without that note.
+
 ### Which tools the AI may use
 
 The Claude CLI Ask AI routes run as a `claude` agent, so they *could* have the

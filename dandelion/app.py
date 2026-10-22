@@ -27,8 +27,8 @@ from starlette.datastructures import UploadFile
 
 from .targets import (get_target, list_targets, list_models,
                       effective_default_model)
-from .client import (connect, build_context, est_tokens, _InMemoryBackend, MockBackend,
-                     HttpKernelBackend)
+from .client import (connect, build_context, collect_images, count_image_outputs,
+                     est_tokens, _InMemoryBackend, MockBackend, HttpKernelBackend)
 from .claude_cli import (stream as stream_claude, call as call_claude,
                          cost_for, CLI_MODELS, AI_MODES, DEFAULT_MODE)
 from .codex_cli import stream as stream_codex, CLI_MODELS as CODEX_CLI_MODELS
@@ -3259,16 +3259,31 @@ def stream_answer(dialog: str, id: str):
             yield sse_message(Div(""), event="done")
             return
         _reset_cells_dirty()                             # the AI's tools may flip this
-        acc = ""
-        streamer = stream_codex if m.model in CODEX_CLI_MODELS else stream_claude
-        for delta in streamer(dialog, content, context, model=m.model, mode=m.ai_mode):
+        acc = lead = ""                                  # lead: our own note, not the model's words
+        try:
+            images, notes = collect_images(backend.messages(dialog), upto_id=id)
+            n_images = count_image_outputs(backend.messages(dialog), upto_id=id)
+        except Exception:  # noqa: BLE001 — a malformed stored output must not hang the answer
+            images, notes, n_images = [], [], 0
+        if m.model in CODEX_CLI_MODELS:
+            kw = {}
+            if n_images:                                 # the Codex route is text-only: say so
+                note = f"{n_images} image output(s) not sent: the Codex route is text-only"
+                kw["image_note"] = note
+                acc = lead = f"_{note}._\n\n"
+                yield sse_message(str(render_md(acc)), event="msg")
+            deltas = stream_codex(dialog, content, context, model=m.model, mode=m.ai_mode, **kw)
+        else:                                            # only the Claude route carries images
+            deltas = stream_claude(dialog, content, context, model=m.model, mode=m.ai_mode,
+                                   images=images, image_notes=notes)
+        for delta in deltas:
             acc += delta
             # str() unwraps NotStr -> raw (already-safe) markdown HTML for the data lines
             yield sse_message(str(render_md(acc)), event="msg")
         edited = _consume_cells_dirty()                  # atomic read+clear vs the MCP thread
-        if not acc and edited:                           # tool-only turn: say something
-            acc = "_Updated the notebook cells as requested._"
-        m.output = acc or m.output
+        if acc == lead and edited:                       # tool-only turn: say something
+            acc += "_Updated the notebook cells as requested._"
+        m.output = (m.output or acc) if acc == lead else acc   # note alone doesn't replace an answer
         if hasattr(backend, "_save"):
             backend._save()                              # flush to disk so a reload keeps the answer
         _clear_pending_stream(dialog, id)

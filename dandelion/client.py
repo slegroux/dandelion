@@ -397,6 +397,101 @@ def build_context(msgs: list, upto_id: str | None = None,
     return body
 
 
+# Images sent to the AI. No image library is a dependency, so nothing is downscaled:
+# an image over the byte cap is skipped (with a note), and the count is capped.
+MAX_CONTEXT_IMAGES = 5
+MAX_IMAGE_BYTES = 3_500_000             # raw bytes; the API's cap is 5 MB of base64
+MAX_IMAGE_SIDE = 8000                   # px; the API rejects the whole turn past this
+_IMAGE_MIMES = ("image/png", "image/jpeg")
+
+
+def _image_size(data: str) -> tuple[int, int] | None:
+    """(width, height) from a base64 PNG's IHDR or a JPEG's SOF header; None if unreadable."""
+    import base64
+    head = "".join(data[:400000].split())[:349520]      # ~256 KB decoded; JPEG EXIF can be long
+    try:
+        b = base64.b64decode(head)
+    except ValueError:
+        return None
+    if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) >= 24:
+        return int.from_bytes(b[16:20], "big"), int.from_bytes(b[20:24], "big")
+    if b[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 <= len(b):
+            if b[i] != 0xFF:
+                return None
+            mk = b[i + 1]
+            if 0xC0 <= mk <= 0xCF and mk not in (0xC4, 0xC8, 0xCC):    # SOFn
+                return int.from_bytes(b[i + 7:i + 9], "big"), int.from_bytes(b[i + 5:i + 7], "big")
+            i += 2 + int.from_bytes(b[i + 2:i + 4], "big")
+    return None
+
+
+def _rich_items(m) -> list[dict]:
+    """A cell's rich outputs that are well-formed ({"type", "data"} dicts)."""
+    rich = getattr(m, "rich", None)
+    return [it for it in rich if isinstance(it, dict)] if isinstance(rich, list) else []
+
+
+def count_image_outputs(msgs: list, upto_id: str | None = None) -> int:
+    """Every image output in unmuted cells before `upto_id`, sent or not (for routes
+    that can't carry images and say how many they left out)."""
+    n = 0
+    for m in msgs:
+        if upto_id is not None and m.id == upto_id:
+            break
+        if not getattr(m, "muted", False):
+            n += sum(str(it.get("type")).startswith("image/") for it in _rich_items(m))
+    return n
+
+
+def collect_images(msgs: list, upto_id: str | None = None) -> tuple[list[dict], list[str]]:
+    """The images in cells before `upto_id`, under build_context's Mute rule.
+
+    Returns ([{"id", "cell", "media_type", "data" (base64), "hash"}, ...] in notebook
+    order, [one-line notes for what was left out]). Pinned cells' images are kept
+    first; the rest fill the count cap newest-first. Past the cap the window slides, so
+    the sent-image prefix breaks and the Claude session starts fresh (it never holds
+    more than the cap, which keeps a request under the API's size limits). SVG can't be sent (no rasterizer
+    is installed) and oversized images are skipped; both are named in the notes.
+    """
+    import hashlib
+    notes: list[str] = []
+    found = []                          # [(pinned, image), ...] in notebook order
+    for i, m in enumerate(msgs):
+        if upto_id is not None and m.id == upto_id:
+            break
+        if getattr(m, "muted", False):
+            continue
+        for it in _rich_items(m):
+            mime, data = it.get("type"), it.get("data")
+            if mime == "image/svg+xml":
+                notes.append(f"cell {i + 1}: SVG image not sent (no rasterizer available)")
+            elif mime in _IMAGE_MIMES and isinstance(data, str) and data:
+                if len(data) * 3 // 4 > MAX_IMAGE_BYTES:
+                    notes.append(f"cell {i + 1}: image not sent (over "
+                                 f"{MAX_IMAGE_BYTES / 1e6:g} MB)")
+                    continue
+                size = _image_size(data)
+                if size and max(size) > MAX_IMAGE_SIDE:
+                    notes.append(f"cell {i + 1}: image not sent ({size[0]} x {size[1]} px, "
+                                 f"over {MAX_IMAGE_SIDE})")
+                    continue
+                found.append((getattr(m, "pinned", False), {
+                    "id": m.id, "cell": i + 1, "media_type": mime, "data": data,
+                    "hash": hashlib.sha1(data.encode()).hexdigest()}))
+    keep = {n for n, (pinned, _) in enumerate(found) if pinned}
+    keep = set(sorted(keep)[-MAX_CONTEXT_IMAGES:])
+    for n in range(len(found) - 1, -1, -1):
+        if len(keep) >= MAX_CONTEXT_IMAGES:
+            break
+        keep.add(n)
+    if len(found) > len(keep):
+        notes.append(f"{len(found) - len(keep)} image(s) not sent "
+                     f"(limit {MAX_CONTEXT_IMAGES})")
+    return [img for n, (_, img) in enumerate(found) if n in keep], notes
+
+
 class _InMemoryBackend:
     """Shared dialog/message bookkeeping for backends that keep state in-process.
 
