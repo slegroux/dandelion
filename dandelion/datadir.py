@@ -304,20 +304,24 @@ def claim_serving() -> None:
     other = running_server_pid()
     if other:
         raise AppRunning(serve_refusal(other))
+    tmp = f.with_name(f"{f.name}.{me}.tmp")          # unique, and skipped by backups
     try:
         f.parent.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(str(me))
         try:
-            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-        except FileExistsError:                 # stale, or a server that just won the race
-            other = running_server_pid()
-            if other:
-                raise AppRunning(serve_refusal(other)) from None
-            tmp = f.with_name(f.name + ".tmp")
-            tmp.write_text(str(me))
-            tmp.replace(f)
-        else:
-            with os.fdopen(fd, "w") as fh:
-                fh.write(str(me))
+            try:
+                os.link(tmp, f)                  # creates f with its content, or fails
+            except FileExistsError:              # stale, or a server that just won the race
+                other = running_server_pid()
+                if other:
+                    raise AppRunning(serve_refusal(other)) from None
+                tmp.replace(f)
+            except OSError:                      # no hard links here (some FUSE mounts)
+                fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(str(me))
+        finally:
+            tmp.unlink(missing_ok=True)
     except OSError as e:
         raise AppRunning(f"not starting: could not record this server in {f} ({e.strerror or e}). "
                          "Without that record a second server could start on this folder. "

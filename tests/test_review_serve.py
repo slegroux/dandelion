@@ -1,6 +1,7 @@
 """`dandelion serve` refuses to start beside another live server on the same data folder."""
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
 import uvicorn
@@ -87,6 +88,7 @@ def test_claim_refuses_when_the_record_cannot_be_written(tmp_path, monkeypatch, 
     def deny(*a, **k):
         raise PermissionError(13, "Permission denied")
     monkeypatch.setattr(os, "open", deny)
+    monkeypatch.setattr(os, "link", deny)
     with pytest.raises(SystemExit) as e:
         cli.cmd_serve(None)
     assert str(tmp_path / ".serve.pid") in str(e.value) and "Permission denied" in str(e.value)
@@ -152,3 +154,40 @@ def test_pappus_era_server_blocks_adopt_and_restore(tmp_path, monkeypatch):
     arc, _ = datadir.backup(tmp_path / "b.tar.gz")
     with pytest.raises(datadir.AppRunning):
         datadir.restore(arc)
+
+
+def test_claim_never_leaves_the_file_without_content(tmp_path, monkeypatch):
+    real_link, seen = os.link, []
+
+    def link(src, dst):
+        seen.append(Path(src).read_text())       # the content is there before f exists
+        assert not os.path.exists(dst)
+        real_link(src, dst)
+    monkeypatch.setattr(os, "link", link)
+    datadir.claim_serving()
+    assert seen == [str(os.getpid())]
+    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert not list(tmp_path.glob(".serve.pid.*"))
+
+
+def test_claim_keeps_a_record_a_racing_claim_just_created(tmp_path, monkeypatch):
+    rec = tmp_path / ".serve.pid"
+    pids = iter([None, 4242])                    # nobody at the first check, a server at the second
+
+    def racing_link(src, dst):
+        rec.write_text("4242")
+        raise FileExistsError
+    monkeypatch.setattr(os, "link", racing_link)
+    monkeypatch.setattr(datadir, "running_server_pid", lambda root=None: next(pids))
+    with pytest.raises(datadir.AppRunning):
+        datadir.claim_serving()
+    assert rec.read_text() == "4242" and not list(tmp_path.glob(".serve.pid.*"))
+
+
+def test_claim_falls_back_when_links_are_unsupported(tmp_path, monkeypatch):
+    def nolink(src, dst):
+        raise PermissionError(1, "not supported")
+    monkeypatch.setattr(os, "link", nolink)
+    datadir.claim_serving()
+    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert not list(tmp_path.glob(".serve.pid.*"))
