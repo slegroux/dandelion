@@ -228,4 +228,29 @@ def test_notes_are_sent_only_when_the_image_set_changes(cli):
     cc.call("img/n", "q1", "<code>x0</code>", images=imgs, image_notes=["NOTE"])
     cc.call("img/n", "q2", "<code>x0</code>\n<code>y</code>", images=imgs,
             image_notes=["NOTE"])
-    assert "NOTE" not in cli[-1]["cmd"][-1]
+    assert "NOTE" in _blocks(cli[0])[0]["text"]          # sent with the image set
+    assert "NOTE" not in cli[-1]["cmd"][-1]              # not repeated
+    cc.call("img/n", "q3", "<code>x0</code>\n<code>y</code>", images=imgs,
+            image_notes=["OTHER"])                       # a new note is said even with no new image
+    assert "OTHER" in cli[-1]["cmd"][-1]
+
+
+def test_stream_with_no_result_reports_the_exit(monkeypatch):
+    monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
+    cc.CLI_SESSIONS.pop("img/x", None)
+    monkeypatch.setattr(cc, "_popen", lambda *a, **k: SimpleNamespace(
+        stdout=SimpleNamespace(readline=lambda: ""), wait=lambda timeout=None: 1,
+        returncode=1))
+    out = list(cc.stream("img/x", "q", "ctx", images=collect_images([_cell(0, [_img()])])[0]))
+    assert out == ["[Claude (Max plan): no answer (exit 1)]"]
+
+
+def test_malformed_rich_is_skipped_and_long_headers_are_measured():
+    msgs = [_cell(0, ["x", None, {"type": "image/png"}]), _cell(1, "oops")]
+    assert collect_images(msgs) == ([], [])
+    import base64
+    big = base64.b64encode(b"\xff\xd8\xff\xe1" + (60000).to_bytes(2, "big") + b"E" * 59998
+                           + b"\xff\xc0\x00\x11\x08" + (10).to_bytes(2, "big")
+                           + (9000).to_bytes(2, "big") + b"\x03" * 10).decode()
+    _, notes = collect_images([_cell(0, [_img(big, "image/jpeg")])])
+    assert any("9000 x 10" in n for n in notes)

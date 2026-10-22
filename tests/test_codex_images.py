@@ -4,14 +4,14 @@ No CLI is run: the stream functions are replaced by recorders.
 """
 import asyncio
 
-import dandelion.app as app
-import dandelion.codex_cli as cx
+from dandelion import app
+from dandelion import codex_cli as cx
 
 PNG = "iVBORw0KGgo="
 
 
 def _run_route(monkeypatch, model, rich, tool_only=False):
-    d = f"cximg/{model}-{bool(rich)}-{tool_only}"
+    d = f"cximg/{model}-{len(rich)}-{tool_only}-{id(rich)}"
     app.STATE["dialog"] = d
     b = app.STATE["backend"]
     b.messages(d)
@@ -53,8 +53,8 @@ def test_codex_route_with_images_says_it_cannot_send_them(monkeypatch):
 
 
 def test_tool_only_codex_turn_with_images_still_gets_the_updated_line(monkeypatch):
-    seen, m = _run_route(monkeypatch, "codex-gpt-5.5-high",
-                         [{"type": "image/png", "data": PNG}], tool_only=True)
+    _, m = _run_route(monkeypatch, "codex-gpt-5.5-high",
+                      [{"type": "image/png", "data": PNG}], tool_only=True)
     assert m.output.startswith("_1 image output(s) not sent")
     assert m.output.endswith("_Updated the notebook cells as requested._")
 
@@ -81,3 +81,22 @@ def test_note_reaches_the_codex_turn_text(monkeypatch):
     assert f"({note})" in with_note.argv[-1]
     plain = cx._build_cmd_info("cximg/t", "q?", "<code>x</code>", None, True)
     assert "image output" not in plain.argv[-1]
+
+
+def test_note_counts_every_image_output_not_just_the_sent_ones(monkeypatch):
+    seen, _ = _run_route(monkeypatch, "codex-gpt-5.5-high",
+                         [{"type": "image/png", "data": PNG}] * 7)
+    assert seen["codex"].startswith("7 image output(s)")
+    seen, _ = _run_route(monkeypatch, "codex-gpt-5.5-high",
+                         [{"type": "image/svg+xml", "data": "<svg/>"}])
+    assert seen["codex"].startswith("1 image output(s)")
+
+
+def test_malformed_rich_items_do_not_break_the_stream(monkeypatch):
+    for model in ("codex-gpt-5.5-high", "claude-cli-opus-high"):
+        for bad in (["not-a-dict", None, {"type": "image/png", "data": PNG}], "oops"):
+            _, m = _run_route(monkeypatch, model, bad)
+            assert m.output.endswith("ans")
+            assert app.STATE.get("pending_stream") != (app.STATE["dialog"], m.id)
+            for c in app.STATE["backend"].messages(app.STATE["dialog"]):
+                c.rich = []                      # the shared backend must still render

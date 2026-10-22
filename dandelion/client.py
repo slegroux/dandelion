@@ -408,8 +408,9 @@ _IMAGE_MIMES = ("image/png", "image/jpeg")
 def _image_size(data: str) -> tuple[int, int] | None:
     """(width, height) from a base64 PNG's IHDR or a JPEG's SOF header; None if unreadable."""
     import base64
+    head = "".join(data[:400000].split())[:349520]      # ~256 KB decoded; JPEG EXIF can be long
     try:
-        b = base64.b64decode(data[:65536])
+        b = base64.b64decode(head)
     except ValueError:
         return None
     if b[:8] == b"\x89PNG\r\n\x1a\n" and len(b) >= 24:
@@ -424,6 +425,24 @@ def _image_size(data: str) -> tuple[int, int] | None:
                 return int.from_bytes(b[i + 7:i + 9], "big"), int.from_bytes(b[i + 5:i + 7], "big")
             i += 2 + int.from_bytes(b[i + 2:i + 4], "big")
     return None
+
+
+def _rich_items(m) -> list[dict]:
+    """A cell's rich outputs that are well-formed ({"type", "data"} dicts)."""
+    rich = getattr(m, "rich", None)
+    return [it for it in rich if isinstance(it, dict)] if isinstance(rich, list) else []
+
+
+def count_image_outputs(msgs: list, upto_id: str | None = None) -> int:
+    """Every image output in unmuted cells before `upto_id`, sent or not (for routes
+    that can't carry images and say how many they left out)."""
+    n = 0
+    for m in msgs:
+        if upto_id is not None and m.id == upto_id:
+            break
+        if not getattr(m, "muted", False):
+            n += sum(str(it.get("type")).startswith("image/") for it in _rich_items(m))
+    return n
 
 
 def collect_images(msgs: list, upto_id: str | None = None) -> tuple[list[dict], list[str]]:
@@ -444,7 +463,7 @@ def collect_images(msgs: list, upto_id: str | None = None) -> tuple[list[dict], 
             break
         if getattr(m, "muted", False):
             continue
-        for it in getattr(m, "rich", None) or []:
+        for it in _rich_items(m):
             mime, data = it.get("type"), it.get("data")
             if mime == "image/svg+xml":
                 notes.append(f"cell {i + 1}: SVG image not sent (no rasterizer available)")

@@ -244,10 +244,10 @@ variable of the same name always overrides the file.
 
 Plots and other image outputs reach the AI on the **Claude CLI** models only: up
 to the 5 newest (or pinned) PNG or JPEG outputs, each at most 8000 px and 3.5 MB;
-SVG is skipped. Mute and Pin work as they do for text. The **Codex CLI**, Claude
-API and GLM models are text-only: they see the code and text around an image but
-not the image, and the reply starts with a one-line note saying how many were
-not sent.
+SVG is skipped. Mute and Pin work as they do for text. The **Codex CLI** is
+text-only: it sees the code and text around an image but not the image, and the
+reply starts with a one-line note saying how many were not sent. The Claude API
+and GLM models are text-only too, without that note.
 
 ### Which tools the AI may use
 
