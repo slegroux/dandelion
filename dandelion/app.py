@@ -3260,10 +3260,16 @@ def stream_answer(dialog: str, id: str):
             return
         _reset_cells_dirty()                             # the AI's tools may flip this
         acc = ""
+        images, notes = collect_images(backend.messages(dialog), upto_id=id)
         if m.model in CODEX_CLI_MODELS:
-            deltas = stream_codex(dialog, content, context, model=m.model, mode=m.ai_mode)
+            kw = {}
+            if images:                                   # the Codex route is text-only: say so
+                note = f"{len(images)} image output(s) not sent: the Codex route is text-only"
+                kw["image_note"] = note
+                acc = f"_{note}._\n\n"
+                yield sse_message(str(render_md(acc)), event="msg")
+            deltas = stream_codex(dialog, content, context, model=m.model, mode=m.ai_mode, **kw)
         else:                                            # only the Claude route carries images
-            images, notes = collect_images(backend.messages(dialog), upto_id=id)
             deltas = stream_claude(dialog, content, context, model=m.model, mode=m.ai_mode,
                                    images=images, image_notes=notes)
         for delta in deltas:
