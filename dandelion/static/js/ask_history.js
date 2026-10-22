@@ -44,6 +44,11 @@ window.AskHistory = function(storage){
     // last recalled — so walking through history is one press per entry.
     immediate: function(current){
       return current === '' || (idx !== -1 && current === entries[idx]);
+    },
+    // After the browser handled the arrow: did the caret hit the edge? Either it
+    // could not move, or it jumped to the very start (Up) / end (Down) of the text.
+    atEdge: function(before, after, up, length){
+      return after === before || after === (up ? 0 : length);
     }
   };
 };

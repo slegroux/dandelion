@@ -45,6 +45,8 @@ var im = [h.immediate(''), h.immediate('typed')];
 h.older('typed'); im.push(h.immediate('two'), h.immediate('two!'));
 h.newer(''); im.push(h.immediate('typed'));
 out.immediate = im;
+out.edge = [h.atEdge(5, 5, true, 20), h.atEdge(5, 0, true, 20), h.atEdge(5, 20, false, 20),
+            h.atEdge(5, 2, true, 20), h.atEdge(5, 9, false, 20), h.atEdge(5, 0, false, 20)];
 console.log(JSON.stringify(out));
 """
 
@@ -65,12 +67,13 @@ def test_ask_history_module_under_node():
     assert o["throwing"] == ["r", "q", "r", "d"]
     assert o["nostorage"] == "k"
     assert o["garbage"] is None
+    assert o["edge"] == [True, True, True, False, False, False]
     assert o["immediate"] == [True, False, True, False, False]
 
 
 def test_composer_wires_arrow_keys_and_module_loads_first():
     js = app.COMPOSER_JS
     assert "ArrowUp" in js and "ArrowDown" in js and "askHistory" in js
-    assert "isComposing" in js and "setTimeout" in js and "immediate(" in js
+    assert "isComposing" in js and "setTimeout" in js and "immediate(" in js and "atEdge(" in js
     src = Path(app.__file__).read_text(encoding="utf-8")
     assert src.index('src="/static/js/ask_history.js"') < src.index('src="/static/js/composer.js"')

@@ -131,7 +131,7 @@ window.__askComposer = function(text){
        document.getElementById('msgType').value === 'prompt' &&
        ta.selectionStart === ta.selectionEnd){
       // Shell-style recall. Empty / unedited-recalled text recalls at once; otherwise
-      // the browser moves the caret first, and we recall only if it couldn't move
+      // the browser moves the caret first, and we recall only if it couldn't move (or jumped to the start/end)
       // (already at the top/bottom visual line — wrapped lines count, not just \n).
       var up = (e.key === 'ArrowUp');
       var recall = function(){
@@ -144,7 +144,7 @@ window.__askComposer = function(text){
       if(askHistory.immediate(ta.value)){ e.preventDefault(); recall(); }
       else {
         var before = ta.selectionStart;
-        setTimeout(function(){ if(ta.selectionStart === before) recall(); }, 0);
+        setTimeout(function(){ if(askHistory.atEdge(before, ta.selectionStart, up, ta.value.length)) recall(); }, 0);
       }
       return;
     }
