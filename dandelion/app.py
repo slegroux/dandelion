@@ -2510,7 +2510,7 @@ def Page():
                                            value=f"~/dandelion-exports/{export.slug(cur('dialog'))}",
                                            title="Folder to write the .md, its images and the .ipynb into"),
                                      Button("Export folder", cls="cell-btn run", type="submit"),
-                                     method="post", action="/export/folder", cls="src-form"),
+                                     method="post", action="/export/folder", cls="export-folder"),
                                 A("Python package (.zip)", href="/export/package"),
                                 A("Publish to blog", href="/publish/blog", target="_blank",
                                   title="Build this dialog into your Quarto blog and open it"),
