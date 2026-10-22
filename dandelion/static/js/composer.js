@@ -1,5 +1,9 @@
 
 var composerCM = null;   // CodeMirror instance while the composer is in Code mode
+var askHistory = (function(){      // Up/Down prompt recall; storage may be blocked
+  var st; try { st = window.localStorage; } catch(e){}
+  return window.AskHistory ? window.AskHistory(st) : null;
+})();
 
 // Drop an immediate "Thinking…" wheel into the stream the instant you send an
 // Ask-AI prompt — before any server round-trip. The htmx response then swaps all
@@ -39,6 +43,7 @@ function _submitComposer(){
   var ta = document.getElementById('composerInput');
   if(!ta || !ta.value.trim()) return;
   var isPrompt = (document.getElementById('msgType').value === 'prompt');
+  if(askHistory){ if(isPrompt) askHistory.push(ta.value); else askHistory.reset(); }
   // requestSubmit() fires the submit event so htmx posts and swaps just #stream
   // (no full-page reload). htmx serializes the form synchronously, so it's safe
   // to clear the composer right after.
@@ -99,6 +104,7 @@ window.__askComposer = function(text){
   setMode('prompt');
   var ta = document.getElementById('composerInput');
   if(!ta) return;
+  if(askHistory) askHistory.reset();
   var quote = String(text || '').split('\n').map(function(l){ return '> ' + l; }).join('\n');
   ta.value = quote + '\n\n';
   ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -114,10 +120,39 @@ window.__askComposer = function(text){
   ta.addEventListener('input', grow);
   window.__growComposer = grow;
   // Plain-textarea keys (Ask AI / Note, and the offline Code fallback).
+  var arrowSeq = 0;                    // latest arrow keypress, for the deferred recall
   ta.addEventListener('keydown', function(e){
     if(e.key === 'Tab'){                 // Tab cycles Ask AI -> Code -> Note (Shift+Tab back)
       e.preventDefault();
       cycleMode(e.shiftKey ? -1 : 1);
+      return;
+    }
+    if((e.key === 'ArrowUp' || e.key === 'ArrowDown') && askHistory &&
+       !e.isComposing && e.keyCode !== 229 &&
+       !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey &&
+       document.getElementById('msgType').value === 'prompt' &&
+       ta.selectionStart === ta.selectionEnd){
+      // Shell-style recall. Empty or just-recalled text recalls at once. Otherwise
+      // the browser moves the caret first; we recall only if it was already at the
+      // top (Up) / bottom (Down) and couldn't move further. Wrapped lines count.
+      var up = (e.key === 'ArrowUp');
+      var recall = function(){
+        var t = up ? askHistory.older(ta.value) : askHistory.newer(ta.value);
+        if(t === null) return;
+        ta.value = t;
+        ta.setSelectionRange(t.length, t.length);
+        if(window.__growComposer) window.__growComposer();
+      };
+      var seq = ++arrowSeq;
+      if(askHistory.immediate(ta.value)){ e.preventDefault(); recall(); }
+      else {
+        var value = ta.value, before = ta.selectionStart;
+        setTimeout(function(){
+          // Skip if another arrow came in or the text changed meanwhile.
+          if(seq !== arrowSeq || ta.value !== value) return;
+          if(askHistory.atEdge(value, before, ta.selectionStart, up)) recall();
+        }, 0);
+      }
       return;
     }
     if(e.key === 'Enter'){
