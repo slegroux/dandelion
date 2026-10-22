@@ -397,6 +397,53 @@ def build_context(msgs: list, upto_id: str | None = None,
     return body
 
 
+# Images sent to the AI. No image library is a dependency, so nothing is downscaled:
+# an image over the byte cap is skipped (with a note), and the count is capped.
+MAX_CONTEXT_IMAGES = 5
+MAX_IMAGE_BYTES = 3_500_000             # raw bytes; the API's cap is 5 MB of base64
+_IMAGE_MIMES = ("image/png", "image/jpeg")
+
+
+def collect_images(msgs: list, upto_id: str | None = None) -> tuple[list[dict], list[str]]:
+    """The images in cells before `upto_id`, under build_context's Mute rule.
+
+    Returns ([{"id", "cell", "media_type", "data" (base64), "hash"}, ...] in notebook
+    order, [one-line notes for what was left out]). Pinned cells' images are kept
+    first; the rest fill the count cap newest-first. SVG can't be sent (no rasterizer
+    is installed) and oversized images are skipped; both are named in the notes.
+    """
+    import hashlib
+    notes: list[str] = []
+    found = []                          # [(pinned, image), ...] in notebook order
+    for i, m in enumerate(msgs):
+        if upto_id is not None and m.id == upto_id:
+            break
+        if getattr(m, "muted", False):
+            continue
+        for it in getattr(m, "rich", None) or []:
+            mime, data = it.get("type"), it.get("data")
+            if mime == "image/svg+xml":
+                notes.append(f"cell {i + 1}: SVG image not sent (no rasterizer available)")
+            elif mime in _IMAGE_MIMES and isinstance(data, str) and data:
+                if len(data) * 3 // 4 > MAX_IMAGE_BYTES:
+                    notes.append(f"cell {i + 1}: image not sent (over "
+                                 f"{MAX_IMAGE_BYTES / 1e6:g} MB)")
+                    continue
+                found.append((getattr(m, "pinned", False), {
+                    "id": m.id, "cell": i + 1, "media_type": mime, "data": data,
+                    "hash": hashlib.sha1(data.encode()).hexdigest()}))
+    keep = {n for n, (pinned, _) in enumerate(found) if pinned}
+    keep = set(sorted(keep)[-MAX_CONTEXT_IMAGES:])
+    for n in range(len(found) - 1, -1, -1):
+        if len(keep) >= MAX_CONTEXT_IMAGES:
+            break
+        keep.add(n)
+    if len(found) > len(keep):
+        notes.append(f"{len(found) - len(keep)} older image(s) not sent "
+                     f"(limit {MAX_CONTEXT_IMAGES})")
+    return [img for n, (_, img) in enumerate(found) if n in keep], notes
+
+
 class _InMemoryBackend:
     """Shared dialog/message bookkeeping for backends that keep state in-process.
 

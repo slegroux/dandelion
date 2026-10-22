@@ -727,7 +727,7 @@ def test_claude_cli_fresh_session_sends_full_context(monkeypatch):
     assert cmd[cmd.index("--setting-sources") + 1] == "project"
     assert cc.CLI_SESSIONS["cli/d1"] == {
         "id": "sid-1", "sent": "<code>x=1</code>", "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": []}
 
 
 def test_claude_cli_appended_cells_resume_with_only_the_delta(monkeypatch):
@@ -763,7 +763,7 @@ def test_claude_cli_edit_above_starts_a_fresh_session(monkeypatch):
     assert "--session-id" in cmd and "--resume" not in cmd      # reset, not resumed
     assert cc.CLI_SESSIONS["cli/d3"] == {
         "id": "sid-new", "sent": edited, "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": []}
 
 
 # ---- AI modes (learning / concise / standard personas) ---------------------
@@ -1247,7 +1247,7 @@ def test_claude_cli_stream_yields_deltas_and_records_session(monkeypatch):
     assert "stream-json" in cmd and "--session-id" in cmd   # streaming, fresh session
     assert cc.CLI_SESSIONS["cli/s1"] == {
         "id": "sid-s1", "sent": "<code>x=1</code>", "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": []}
 
 
 def test_claude_cli_stream_resumes_on_append(monkeypatch):
@@ -2769,7 +2769,7 @@ def test_build_cmd_resume_edit_previous_cell_reminds_tool_use(monkeypatch):
     context = '<code n="1" id="_prev">x = 1</code>'
     cc.CLI_SESSIONS["mcp/edit-prev"] = {
         "id": "sid-9", "sent": context, "mode": None,
-        "model": None, "effort": None}
+        "model": None, "effort": None, "sent_images": []}
     monkeypatch.setenv("DANDELION_MCP_TOKEN", "t")
     monkeypatch.setenv("DANDELION_APP_URL", "http://127.0.0.1:8000")
     monkeypatch.delenv("DANDELION_CELL_TOOLS", raising=False)

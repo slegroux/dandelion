@@ -27,8 +27,8 @@ from starlette.datastructures import UploadFile
 
 from .targets import (get_target, list_targets, list_models,
                       effective_default_model)
-from .client import (connect, build_context, est_tokens, _InMemoryBackend, MockBackend,
-                     HttpKernelBackend)
+from .client import (connect, build_context, collect_images, est_tokens,
+                     _InMemoryBackend, MockBackend, HttpKernelBackend)
 from .claude_cli import (stream as stream_claude, call as call_claude,
                          cost_for, CLI_MODELS, AI_MODES, DEFAULT_MODE)
 from .codex_cli import stream as stream_codex, CLI_MODELS as CODEX_CLI_MODELS
@@ -3260,8 +3260,13 @@ def stream_answer(dialog: str, id: str):
             return
         _reset_cells_dirty()                             # the AI's tools may flip this
         acc = ""
-        streamer = stream_codex if m.model in CODEX_CLI_MODELS else stream_claude
-        for delta in streamer(dialog, content, context, model=m.model, mode=m.ai_mode):
+        if m.model in CODEX_CLI_MODELS:
+            deltas = stream_codex(dialog, content, context, model=m.model, mode=m.ai_mode)
+        else:                                            # only the Claude route carries images
+            images, notes = collect_images(backend.messages(dialog), upto_id=id)
+            deltas = stream_claude(dialog, content, context, model=m.model, mode=m.ai_mode,
+                                   images=images, image_notes=notes)
+        for delta in deltas:
             acc += delta
             # str() unwraps NotStr -> raw (already-safe) markdown HTML for the data lines
             yield sse_message(str(render_md(acc)), event="msg")

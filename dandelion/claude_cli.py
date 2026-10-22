@@ -8,7 +8,13 @@ notebook cells. The notebook — not the chat log — is the source of truth, so
 session is only safe to resume while the context we already sent is still a
 prefix of the current context (cells were only appended). Any edit / delete /
 mute above the prompt breaks that prefix, so we start a fresh session and
-re-send the full context. State: ``dialog -> {"id": session-uuid, "sent": ctx}``.
+re-send the full context. State: ``dialog -> {"id": session-uuid, "sent": ctx,
+"sent_images": [(cell id, hash), ...]}``.
+
+Images (``client.collect_images``) ride the same rule: a turn that has any goes in
+as one stream-json user message on stdin (text + base64 image blocks); the session
+remembers earlier images, so a resume sends only those past ``sent_images`` and a
+muted/changed image above starts fresh. Turns without images keep the positional prompt.
 
 Two entry points share the session/command logic:
     call(dialog, content, context)   -> str            (blocking; kernel server)
@@ -321,10 +327,33 @@ def _model_config(model_id: str | None) -> tuple[str | None, str | None]:
     return None, None
 
 
+class _Argv(list):
+    """argv, plus the stream-json user message for stdin when the turn has images."""
+    stdin: str | None = None
+
+
+def _image_keys(images: list[dict] | None) -> list[tuple[str, str]]:
+    return [(im["id"], im["hash"]) for im in images or []]
+
+
+def _image_turn(text: str, images: list[dict]) -> str:
+    """One stream-json user message: the text, then each image after a cell label."""
+    blocks = [{"type": "text", "text": text}]
+    for im in images:
+        blocks.append({"type": "text", "text": f"[Image output of cell {im['cell']}]"})
+        blocks.append({"type": "image", "source": {
+            "type": "base64", "media_type": im["media_type"], "data": im["data"]}})
+    return json.dumps({"type": "user", "message": {"role": "user", "content": blocks}})
+
+
 def _build_cmd(dialog: str, content: str, context: str, stream: bool,
-               model: str | None = None, mode: str | None = None):
+               model: str | None = None, mode: str | None = None,
+               images: list[dict] | None = None, notes: list[str] | None = None):
     """Build the argv and the session id we'll record. Returns (cmd, sid), or
     (None, None) if the `claude` binary isn't installed.
+
+    With `images`, the turn goes as stream-json on stdin (``cmd.stdin``) instead of
+    the positional prompt. `notes` (what was left out) are added to the turn's text.
 
     Resumes the dialog's session when the context we already sent is still a
     prefix of the current context (append-only), sending just the new cells;
@@ -340,13 +369,17 @@ def _build_cmd(dialog: str, content: str, context: str, stream: bool,
     # rewrite, so switching mode must start a fresh session to actually take effect.
     resume = bool(st) and context.startswith(st["sent"]) and st.get("mode") == mode \
         and st.get("model") == model_flag and st.get("effort") == effort_flag
-    fmt = "stream-json" if stream else "json"
-    cmd = [claude, "-p", "--output-format", fmt, "--disable-slash-commands",
+    images = images or []
+    sent_imgs = list(st.get("sent_images") or []) if st else []
+    resume = resume and _image_keys(images)[:len(sent_imgs)] == sent_imgs   # same prefix rule
+    new_images = images[len(sent_imgs):] if resume else images   # a resumed session holds the rest
+    fmt = "stream-json" if stream or new_images else "json"
+    cmd = _Argv([claude, "-p", "--output-format", fmt, "--disable-slash-commands",
            # Lean mode: skip MCP servers and *user* settings (hooks, auto-memory,
            # plugins). On a heavy global config these add ~1s+ of per-turn latency,
            # and a notebook assistant needs none of them. Subscription auth is
            # unaffected (it's credentials, not a setting source). Big TTFT win.
-           "--strict-mcp-config", "--setting-sources", "project"]
+           "--strict-mcp-config", "--setting-sources", "project"])
     # Off-screen tools stay off. `claude -p` is the full agent; left alone it also
     # has Write/Edit/Bash and would write the whole solution to a scratchpad and run
     # it off-screen — taking the executor's seat the human is supposed to hold. The
@@ -357,6 +390,10 @@ def _build_cmd(dialog: str, content: str, context: str, stream: bool,
         cmd += ["--disallowed-tools", *deny]
     if stream:                              # stream-json needs these to emit deltas
         cmd += ["--include-partial-messages", "--verbose"]
+    elif new_images:                        # stream-json output requires --verbose
+        cmd.append("--verbose")
+    if new_images:
+        cmd += ["--input-format", "stream-json"]
     tools = _cell_tools_enabled()
     if resume:
         sid = st["id"]
@@ -384,18 +421,24 @@ def _build_cmd(dialog: str, content: str, context: str, stream: bool,
         cmd += ["--model", model_flag]
     if effort_flag:
         cmd += ["--effort", effort_flag]
+    if notes:
+        user_msg += "\n\n(" + "; ".join(notes) + ")"
     if _wants_diagram(content):             # just-in-time: attach diagram conventions to
         user_msg += _DIAGRAM_GUIDANCE       # the turn that asks, not the global persona
+    if new_images:                          # the turn goes on stdin, no positional
+        cmd.stdin = _image_turn(user_msg, new_images)
+        return cmd, sid
     if allow:                               # `--allowedTools` is variadic; `--` stops
         cmd.append("--")                    # it from swallowing the prompt positional
     cmd.append(user_msg)                     # prompt is the trailing positional
     return cmd, sid
 
 
-def _run_cli(cmd, cwd, env, timeout):
-    """Blocking subprocess.run (one place for tests to patch)."""
+def _run_cli(cmd, cwd, env, timeout, stdin=None):
+    """Blocking subprocess.run (one place for tests to patch). `stdin` is the
+    stream-json user message of an image turn."""
     import subprocess
-    return subprocess.run(cmd, capture_output=True, text=True,
+    return subprocess.run(cmd, capture_output=True, text=True, input=stdin,
                           cwd=cwd, env=env, timeout=timeout)
 
 
@@ -435,20 +478,23 @@ def drop(dialog: str) -> None:
 
 
 def call(dialog: str, content: str, context: str = "", model: str | None = None,
-         mode: str | None = None) -> str:
+         mode: str | None = None, images: list[dict] | None = None,
+         image_notes: list[str] | None = None) -> str:
     """Non-streaming: one `claude -p` call, full text back. Used by the kernel server."""
-    cmd, sid = _build_cmd(dialog, content, context, stream=False, model=model, mode=mode)
+    cmd, sid = _build_cmd(dialog, content, context, stream=False, model=model, mode=mode,
+                          images=images, notes=image_notes)
     if cmd is None:
         return MISSING
     try:
-        r = _run_cli(cmd, _cli_cwd(), _env(), 180)
+        r = _run_cli(cmd, _cli_cwd(), _env(), 180, *([cmd.stdin] if cmd.stdin else []))
     except Exception as e:  # noqa: BLE001 — incl. TimeoutExpired
         return f"[Claude (Max plan) failed to run: {e}]"
     if r.returncode != 0:
         msg = (r.stderr or r.stdout or "").strip()[:400]
         return f"[Claude (Max plan) error: {msg or f'exit {r.returncode}'}]"
     try:
-        data = json.loads(r.stdout)
+        # an image turn's stdout is stream-json lines, not one object
+        data = _last_result(r.stdout) if cmd.stdin else json.loads(r.stdout)
     except (ValueError, TypeError):
         return (r.stdout or "").strip() or "[Claude (Max plan): empty response]"
     if data.get("is_error"):
@@ -456,22 +502,41 @@ def call(dialog: str, content: str, context: str = "", model: str | None = None,
     model_flag, effort_flag = _model_config(model)
     CLI_SESSIONS[dialog] = {
         "id": data.get("session_id") or sid, "sent": context, "mode": mode,
-        "model": model_flag, "effort": effort_flag}
+        "model": model_flag, "effort": effort_flag, "sent_images": _image_keys(images)}
     _accrue(dialog, data)
     return data.get("result", "")
 
 
-def _popen(cmd, cwd, env):
+def _last_result(stdout: str) -> dict:
+    """The terminal `result` event of a stream-json run (ValueError if none)."""
+    for line in reversed((stdout or "").splitlines()):
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(ev, dict) and ev.get("type") == "result":
+            return ev
+    raise ValueError("no result event")
+
+
+def _popen(cmd, cwd, env, stdin=None):
     """Streaming subprocess.Popen (one place for tests to patch). bufsize=1 makes
     the pipe line-buffered so each stream-json line is readable the moment Claude
-    flushes it — paired with readline() below, tokens arrive without read-ahead lag."""
+    flushes it — paired with readline() below, tokens arrive without read-ahead lag.
+    An image turn's `stdin` message is written and the pipe closed, so the CLI starts."""
     import subprocess
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            stdin=subprocess.DEVNULL, text=True, bufsize=1, cwd=cwd, env=env)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                         stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
+                         text=True, bufsize=1, cwd=cwd, env=env)
+    if stdin is not None:
+        p.stdin.write(stdin + "\n")
+        p.stdin.close()
+    return p
 
 
 def stream(dialog: str, content: str, context: str = "", model: str | None = None,
-           mode: str | None = None):
+           mode: str | None = None, images: list[dict] | None = None,
+           image_notes: list[str] | None = None):
     """Streaming: yield text deltas as Claude generates them (for the app's SSE route).
 
     Parses `claude -p --output-format stream-json` events, yielding each
@@ -479,12 +544,13 @@ def stream(dialog: str, content: str, context: str = "", model: str | None = Non
     `result` event so the next turn can resume + send only the delta — same
     contract as `call`.
     """
-    cmd, sid = _build_cmd(dialog, content, context, stream=True, model=model, mode=mode)
+    cmd, sid = _build_cmd(dialog, content, context, stream=True, model=model, mode=mode,
+                          images=images, notes=image_notes)
     if cmd is None:
         yield MISSING
         return
     try:
-        p = _popen(cmd, _cli_cwd(), _env())
+        p = _popen(cmd, _cli_cwd(), _env(), *([cmd.stdin] if cmd.stdin else []))
     except Exception as e:  # noqa: BLE001
         yield f"[Claude (Max plan) failed to run: {e}]"
         return
@@ -520,7 +586,7 @@ def stream(dialog: str, content: str, context: str = "", model: str | None = Non
         model_flag, effort_flag = _model_config(model)
         CLI_SESSIONS[dialog] = {
             "id": final_sid, "sent": context, "mode": mode,
-            "model": model_flag, "effort": effort_flag}
+            "model": model_flag, "effort": effort_flag, "sent_images": _image_keys(images)}
         if final_result is not None and not final_result.get("is_error"):
             _accrue(dialog, final_result)            # running token/cost tally
     finally:
