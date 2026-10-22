@@ -2004,6 +2004,7 @@ def Composer():
             method="post", action="/send", id="composerForm", cls="box",
             hx_post="/send", hx_target="#stream", hx_swap="outerHTML",
         ),
+        Script(src="/static/js/ask_history.js"),
         Script(src="/static/js/composer.js"),
         cls="wrap"), cls="composer"))
 

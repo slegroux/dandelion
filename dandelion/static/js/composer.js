@@ -1,5 +1,9 @@
 
 var composerCM = null;   // CodeMirror instance while the composer is in Code mode
+var askHistory = (function(){      // Up/Down prompt recall; storage may be blocked
+  var st; try { st = window.localStorage; } catch(e){}
+  return window.AskHistory ? window.AskHistory(st) : null;
+})();
 
 // Drop an immediate "Thinking…" wheel into the stream the instant you send an
 // Ask-AI prompt — before any server round-trip. The htmx response then swaps all
@@ -39,6 +43,7 @@ function _submitComposer(){
   var ta = document.getElementById('composerInput');
   if(!ta || !ta.value.trim()) return;
   var isPrompt = (document.getElementById('msgType').value === 'prompt');
+  if(isPrompt && askHistory) askHistory.push(ta.value);
   // requestSubmit() fires the submit event so htmx posts and swaps just #stream
   // (no full-page reload). htmx serializes the form synchronously, so it's safe
   // to clear the composer right after.
@@ -99,6 +104,7 @@ window.__askComposer = function(text){
   setMode('prompt');
   var ta = document.getElementById('composerInput');
   if(!ta) return;
+  if(askHistory) askHistory.reset();
   var quote = String(text || '').split('\n').map(function(l){ return '> ' + l; }).join('\n');
   ta.value = quote + '\n\n';
   ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -118,6 +124,25 @@ window.__askComposer = function(text){
     if(e.key === 'Tab'){                 // Tab cycles Ask AI -> Code -> Note (Shift+Tab back)
       e.preventDefault();
       cycleMode(e.shiftKey ? -1 : 1);
+      return;
+    }
+    if((e.key === 'ArrowUp' || e.key === 'ArrowDown') && askHistory &&
+       !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey &&
+       document.getElementById('msgType').value === 'prompt' &&
+       ta.selectionStart === ta.selectionEnd){
+      // Shell-style recall, only when the caret is on the first (Up) / last (Down)
+      // line; elsewhere the arrow moves within a multi-line prompt as usual.
+      var up = (e.key === 'ArrowUp');
+      var edge = up ? ta.value.slice(0, ta.selectionStart) : ta.value.slice(ta.selectionEnd);
+      if(edge.indexOf('\n') === -1){
+        var t = up ? askHistory.older(ta.value) : askHistory.newer(ta.value);
+        if(t !== null){
+          e.preventDefault();
+          ta.value = t;
+          ta.setSelectionRange(t.length, t.length);
+          if(window.__growComposer) window.__growComposer();
+        }
+      }
       return;
     }
     if(e.key === 'Enter'){
