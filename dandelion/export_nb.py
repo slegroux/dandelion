@@ -10,6 +10,10 @@ pip-installable package; here we render the dialog as a document.
 """
 from __future__ import annotations
 
+import base64
+import json
+from pathlib import Path
+
 
 def _lines(s: str) -> list:
     """nbformat wants source/text as a list of lines (keeping newlines)."""
@@ -74,3 +78,51 @@ def to_markdown(msgs) -> str:
         else:
             out.append(_prompt_md(m))
     return "\n\n".join(out) + "\n"
+
+
+_IMAGE_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/svg+xml": "svg"}
+
+
+def _image_bytes(mime: str, data) -> bytes:
+    if mime == "image/svg+xml":                    # SVG is text, the others base64
+        return data.encode("utf-8") if isinstance(data, str) else bytes(data)
+    return base64.b64decode(data)
+
+
+def export_folder(msgs, dest, name: str = "dialog") -> Path:
+    """Write ``<slug>.md`` (images saved under ``<slug>_files/`` and linked relatively)
+    and ``<slug>.ipynb`` into ``dest``, creating it if missing. Returns the .md path.
+
+    The slug is built from ``name`` so every written name is a safe identifier:
+    nothing is ever written outside ``dest``."""
+    from .export import slug
+    stem = slug(name)
+    dest = Path(dest)
+    files_dir = dest / f"{stem}_files"
+    out, made = [], False
+    for n, m in enumerate(msgs, 1):
+        if m.msg_type == "code":
+            out.append(f"```python\n{m.content}\n```")
+            if m.output:
+                out.append(f"```\n{m.output}\n```")
+            k = 0
+            for item in m.rich:
+                ext = _IMAGE_EXT.get(item.get("type", ""))
+                if not ext:
+                    continue
+                k += 1
+                if not made:
+                    files_dir.mkdir(parents=True, exist_ok=True)
+                    made = True
+                fname = f"cell-{n}-{k}.{ext}"
+                (files_dir / fname).write_bytes(_image_bytes(item["type"], item.get("data", "")))
+                out.append(f"![output]({stem}_files/{fname})")
+        elif m.msg_type == "note":
+            out.append(m.content)
+        else:
+            out.append(_prompt_md(m))
+    dest.mkdir(parents=True, exist_ok=True)
+    md_path = dest / f"{stem}.md"
+    md_path.write_text("\n\n".join(out) + "\n", encoding="utf-8")
+    (dest / f"{stem}.ipynb").write_text(json.dumps(to_ipynb(msgs), indent=1), encoding="utf-8")
+    return md_path

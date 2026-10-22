@@ -2506,6 +2506,11 @@ def Page():
                     Details(Summary(_icon("download"), cls="gear icon-btn", title="Export this dialog"),
                             Div(A("Jupyter notebook (.ipynb)", href="/export/ipynb"),
                                 A("Markdown (.md)", href="/export/md"),
+                                Form(Input(name="dest", type="text", cls="src-url",
+                                           value=f"~/dandelion-exports/{export.slug(cur('dialog'))}",
+                                           title="Folder to write the .md, its images and the .ipynb into"),
+                                     Button("Export folder", cls="cell-btn run", type="submit"),
+                                     method="post", action="/export/folder", cls="src-form"),
                                 A("Python package (.zip)", href="/export/package"),
                                 A("Publish to blog", href="/publish/blog", target="_blank",
                                   title="Build this dialog into your Quarto blog and open it"),
@@ -3838,6 +3843,26 @@ def export_md():
     msgs = STATE["backend"].messages(cur("dialog"))
     fname = cur("dialog").replace("/", "-") + ".md"
     return _download(to_markdown(msgs), fname, "text/markdown; charset=utf-8")
+
+
+@rt("/export/folder", methods=["post"])
+def export_to_folder(dest: str = ""):
+    """Write this dialog as a folder (Markdown + image files + .ipynb) at `dest` and
+    flash the written path, or why it couldn't be written."""
+    from pathlib import Path
+    from starlette.responses import RedirectResponse
+    from .export_nb import export_folder
+    dialog = cur("dialog")
+    path = Path(dest.strip()).expanduser()
+    if not dest.strip() or not path.is_absolute():
+        set_cur("flash", "Export folder must be an absolute path (e.g. ~/dandelion-exports/notes).")
+    else:
+        try:
+            md = export_folder(STATE["backend"].messages(dialog), path, dialog)
+            set_cur("flash", f"Exported to {md.parent}")
+        except OSError as e:
+            set_cur("flash", f"Couldn't write the export folder: {e.strerror or e}")
+    return RedirectResponse("/", status_code=303)
 
 
 @rt("/dialog/export/ipynb")
