@@ -421,7 +421,7 @@ def _build_cmd(dialog: str, content: str, context: str, stream: bool,
         cmd += ["--model", model_flag]
     if effort_flag:
         cmd += ["--effort", effort_flag]
-    if notes:
+    if notes and (new_images or not resume):    # say it when the image set changes
         user_msg += "\n\n(" + "; ".join(notes) + ")"
     if _wants_diagram(content):             # just-in-time: attach diagram conventions to
         user_msg += _DIAGRAM_GUIDANCE       # the turn that asks, not the global persona
@@ -496,6 +496,8 @@ def call(dialog: str, content: str, context: str = "", model: str | None = None,
         # an image turn's stdout is stream-json lines, not one object
         data = _last_result(r.stdout) if cmd.stdin else json.loads(r.stdout)
     except (ValueError, TypeError):
+        if cmd.stdin:
+            return "[Claude (Max plan): no result event]"
         return (r.stdout or "").strip() or "[Claude (Max plan): empty response]"
     if data.get("is_error"):
         return f"[Claude (Max plan) error: {data.get('result') or 'unknown'}]"
@@ -529,8 +531,11 @@ def _popen(cmd, cwd, env, stdin=None):
                          stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE,
                          text=True, bufsize=1, cwd=cwd, env=env)
     if stdin is not None:
-        p.stdin.write(stdin + "\n")
-        p.stdin.close()
+        try:
+            p.stdin.write(stdin + "\n")
+            p.stdin.close()
+        except BrokenPipeError:             # the CLI exited early; stream() reaps it
+            pass
     return p
 
 
@@ -581,14 +586,16 @@ def stream(dialog: str, content: str, context: str = "", model: str | None = Non
             p.wait(timeout=5)
         except Exception:  # noqa: BLE001 — reaping is best-effort
             pass
-        # Advance the session: remember its id, the full context it now knows, and the
-        # mode it was started with (a mode change forces a fresh session — see _build_cmd).
-        model_flag, effort_flag = _model_config(model)
-        CLI_SESSIONS[dialog] = {
-            "id": final_sid, "sent": context, "mode": mode,
-            "model": model_flag, "effort": effort_flag, "sent_images": _image_keys(images)}
         if final_result is not None and not final_result.get("is_error"):
+            # Advance the session: remember its id, the full context it now knows, and the
+            # mode it was started with (a mode change forces a fresh session — see _build_cmd).
+            model_flag, effort_flag = _model_config(model)
+            CLI_SESSIONS[dialog] = {
+                "id": final_sid, "sent": context, "mode": mode, "model": model_flag,
+                "effort": effort_flag, "sent_images": _image_keys(images)}
             _accrue(dialog, final_result)            # running token/cost tally
+        else:                                        # failed turn: the next one starts fresh
+            CLI_SESSIONS.pop(dialog, None)
     finally:
         # If the SSE consumer abandons the generator (GeneratorExit on .close())
         # mid-stream, the loop above never finishes and the `claude -p` child would

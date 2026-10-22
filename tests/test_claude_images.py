@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import dandelion.claude_cli as cc
-from dandelion.client import Msg, collect_images, MAX_CONTEXT_IMAGES, MAX_IMAGE_BYTES
+from dandelion.client import MAX_CONTEXT_IMAGES, MAX_IMAGE_BYTES, Msg, collect_images
 
 PNG = "iVBORw0KGgo="
 
@@ -54,7 +54,7 @@ def test_collect_images_skips_muted_svg_oversize_and_caps_count():
     imgs, notes = collect_images(many)
     assert len(imgs) == MAX_CONTEXT_IMAGES
     assert imgs[0]["id"] == "c0" and imgs[-1]["id"] == f"c{MAX_CONTEXT_IMAGES + 1}"
-    assert any("older image" in n for n in notes)
+    assert any("not sent (limit" in n for n in notes)
     assert [i["id"] for i in collect_images(many, upto_id="c3")[0]] == ["c0", "c1", "c2"]
 
 
@@ -145,3 +145,87 @@ def test_stream_writes_the_turn_to_stdin(monkeypatch):
     assert cmd[cmd.index("--input-format") + 1] == "stream-json" and "q" not in cmd
     assert json.loads(stdin)["message"]["content"][-1]["type"] == "image"
     assert cc.CLI_SESSIONS["img/s"]["sent_images"][0][0] == "c0"
+
+
+def _png_b64(w, h):
+    import base64
+    return base64.b64encode(b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+                            + w.to_bytes(4, "big") + h.to_bytes(4, "big") + b"\x08\x02\0\0\0").decode()
+
+
+def _jpeg_b64(w, h):
+    import base64
+    return base64.b64encode(b"\xff\xd8\xff\xe0\x00\x04ab" + b"\xff\xc0\x00\x11\x08"
+                            + h.to_bytes(2, "big") + w.to_bytes(2, "big") + b"\x03" * 10).decode()
+
+
+def test_images_over_8000_px_are_skipped_with_a_note():
+    msgs = [_cell(0, [_img(_png_b64(9000, 10))]),
+            _cell(1, [_img(_jpeg_b64(20, 8500), "image/jpeg")]),
+            _cell(2, [_img(_png_b64(1568, 900))]),
+            _cell(3, [_img(_jpeg_b64(800, 600), "image/jpeg")])]
+    imgs, notes = collect_images(msgs)
+    assert [i["id"] for i in imgs] == ["c2", "c3"]
+    assert any("9000 x 10 px" in n for n in notes) and any("20 x 8500 px" in n for n in notes)
+
+
+def test_changed_image_bytes_with_same_text_start_a_fresh_session(cli):
+    cc.CLI_SESSIONS.pop("img/f", None)
+    c0 = _cell(0, [_img("aa")])
+    ctx = "<code>x0</code>"                     # text never changes; only the image does
+    cc.call("img/f", "q1", ctx, images=collect_images([c0])[0])
+    c0.rich = [_img("zz")]                       # cell re-run: same id, new image bytes
+    cc.call("img/f", "q2", ctx, images=collect_images([c0])[0])
+    cmd = cli[-1]["cmd"]
+    assert "--session-id" in cmd and "--resume" not in cmd
+    assert [b["source"]["data"] for b in _blocks(cli[-1]) if b["type"] == "image"] == ["zz"]
+
+
+def test_slid_window_past_the_cap_starts_a_fresh_session(cli):
+    cc.CLI_SESSIONS.pop("img/g", None)
+    cells = [_cell(n, [_img(f"d{n}")]) for n in range(MAX_CONTEXT_IMAGES + 1)]
+    ctx = "<code>x</code>"
+    cc.call("img/g", "q1", ctx, images=collect_images(cells[:MAX_CONTEXT_IMAGES])[0])
+    cc.call("img/g", "q2", ctx, images=collect_images(cells)[0])      # oldest slides out
+    cmd = cli[-1]["cmd"]
+    assert "--session-id" in cmd and "--resume" not in cmd
+    assert len([b for b in _blocks(cli[-1]) if b["type"] == "image"]) == MAX_CONTEXT_IMAGES
+
+
+def test_failed_stream_turn_does_not_advance_the_session(monkeypatch):
+    monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
+    cc.CLI_SESSIONS.pop("img/h", None)
+    cmds = []
+    results = iter([{"type": "result", "session_id": "bad", "is_error": True, "result": "400"},
+                    {"type": "result", "session_id": "ok", "is_error": False}])
+
+    def popen(cmd, cwd, env, stdin=None):
+        cmds.append(cmd)
+        it = iter([json.dumps(next(results)) + "\n"])
+        return SimpleNamespace(stdout=SimpleNamespace(readline=lambda: next(it, "")),
+                               wait=lambda timeout=None: 0)
+    monkeypatch.setattr(cc, "_popen", popen)
+    imgs = collect_images([_cell(0, [_img()])])[0]
+    list(cc.stream("img/h", "q1", "<code>x0</code>", images=imgs))
+    assert "img/h" not in cc.CLI_SESSIONS
+    list(cc.stream("img/h", "q2", "<code>x0</code>", images=imgs))
+    assert "--session-id" in cmds[-1] and "--resume" not in cmds[-1]
+    assert cc.CLI_SESSIONS["img/h"]["id"] == "ok"
+
+
+def test_image_turn_without_a_result_event_is_an_error(monkeypatch):
+    monkeypatch.setattr(cc, "claude_bin", lambda: "/bin/claude")
+    cc.CLI_SESSIONS.pop("img/i", None)
+    monkeypatch.setattr(cc, "_run_cli", lambda *a, **k: SimpleNamespace(
+        returncode=0, stderr="", stdout='{"type":"system"}'))
+    imgs = collect_images([_cell(0, [_img()])])[0]
+    assert "no result event" in cc.call("img/i", "q", "ctx", images=imgs)
+
+
+def test_notes_are_sent_only_when_the_image_set_changes(cli):
+    cc.CLI_SESSIONS.pop("img/n", None)
+    imgs = collect_images([_cell(0, [_img()])])[0]
+    cc.call("img/n", "q1", "<code>x0</code>", images=imgs, image_notes=["NOTE"])
+    cc.call("img/n", "q2", "<code>x0</code>\n<code>y</code>", images=imgs,
+            image_notes=["NOTE"])
+    assert "NOTE" not in cli[-1]["cmd"][-1]
