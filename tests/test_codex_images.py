@@ -10,8 +10,8 @@ import dandelion.codex_cli as cx
 PNG = "iVBORw0KGgo="
 
 
-def _run_route(monkeypatch, model, rich):
-    d = f"cximg/{model}-{bool(rich)}"
+def _run_route(monkeypatch, model, rich, tool_only=False):
+    d = f"cximg/{model}-{bool(rich)}-{tool_only}"
     app.STATE["dialog"] = d
     b = app.STATE["backend"]
     b.messages(d)
@@ -23,6 +23,9 @@ def _run_route(monkeypatch, model, rich):
 
     def codex(dialog, content, ctx, model=None, mode=None, image_note=""):
         seen["codex"] = image_note
+        if tool_only:                       # the AI edited cells and said nothing
+            app._mark_cells_dirty()
+            return iter([])
         return iter(["ans"])
 
     def claude(dialog, content, ctx, model=None, mode=None, images=None, image_notes=None):
@@ -47,6 +50,13 @@ def test_codex_route_with_images_says_it_cannot_send_them(monkeypatch):
     assert "claude" not in seen
     assert m.output.startswith("_1 image output(s) not sent")
     assert m.output.endswith("ans")
+
+
+def test_tool_only_codex_turn_with_images_still_gets_the_updated_line(monkeypatch):
+    seen, m = _run_route(monkeypatch, "codex-gpt-5.5-high",
+                         [{"type": "image/png", "data": PNG}], tool_only=True)
+    assert m.output.startswith("_1 image output(s) not sent")
+    assert m.output.endswith("_Updated the notebook cells as requested._")
 
 
 def test_codex_route_without_images_has_no_note(monkeypatch):

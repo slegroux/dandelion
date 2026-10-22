@@ -3259,14 +3259,14 @@ def stream_answer(dialog: str, id: str):
             yield sse_message(Div(""), event="done")
             return
         _reset_cells_dirty()                             # the AI's tools may flip this
-        acc = ""
+        acc = lead = ""                                  # lead: our own note, not the model's words
         images, notes = collect_images(backend.messages(dialog), upto_id=id)
         if m.model in CODEX_CLI_MODELS:
             kw = {}
             if images:                                   # the Codex route is text-only: say so
                 note = f"{len(images)} image output(s) not sent: the Codex route is text-only"
                 kw["image_note"] = note
-                acc = f"_{note}._\n\n"
+                acc = lead = f"_{note}._\n\n"
                 yield sse_message(str(render_md(acc)), event="msg")
             deltas = stream_codex(dialog, content, context, model=m.model, mode=m.ai_mode, **kw)
         else:                                            # only the Claude route carries images
@@ -3277,8 +3277,8 @@ def stream_answer(dialog: str, id: str):
             # str() unwraps NotStr -> raw (already-safe) markdown HTML for the data lines
             yield sse_message(str(render_md(acc)), event="msg")
         edited = _consume_cells_dirty()                  # atomic read+clear vs the MCP thread
-        if not acc and edited:                           # tool-only turn: say something
-            acc = "_Updated the notebook cells as requested._"
+        if acc == lead and edited:                       # tool-only turn: say something
+            acc += "_Updated the notebook cells as requested._"
         m.output = acc or m.output
         if hasattr(backend, "_save"):
             backend._save()                              # flush to disk so a reload keeps the answer
