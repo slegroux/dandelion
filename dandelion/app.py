@@ -3860,8 +3860,9 @@ def export_to_folder(dest: str = ""):
         try:
             md = export_folder(STATE["backend"].messages(dialog), path, dialog)
             set_cur("flash", f"Exported to {md.parent}")
-        except OSError as e:
-            set_cur("flash", f"Couldn't write the export folder: {e.strerror or e}")
+        except (OSError, ValueError) as e:
+            set_cur("flash", f"Couldn't write the export folder: "
+                             f"{e.strerror if isinstance(e, OSError) and e.strerror else e}")
     return RedirectResponse("/", status_code=303)
 
 
