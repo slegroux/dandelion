@@ -843,7 +843,7 @@ def _lib_menu(m):
 
 
 def _ctx_buttons(m, num=None):
-    """Type / Insert / Copy / Export / Lib / Mute / Pin / Delete — in both rendered
+    """Type / Insert / Copy / Export / Lib / Mute / Above / Pin / Delete — in both rendered
     and edit modes. Code cells also get an Export toggle (`#| export`) and, when
     libraries exist, a Lib picker (`#| export <lib>:<module>`)."""
     mid = m.id
@@ -858,15 +858,16 @@ def _ctx_buttons(m, num=None):
         if lib_menu is not None:
             btns.append(lib_menu)
     copy_menu = _copy_menu(mid)
-    above_menu = [] if num is None or num <= 1 else [_dropdown(
+    can_bulk = hasattr(STATE["backend"], "set_muted_above")
+    above_menu = [] if num is None or num <= 1 or not can_bulk else [_dropdown(
         "Above ▾",
         _stream_btn("Start fresh here", "/cell/mute-above", cls="ins-item",
                     vals={"id": mid, "muted": "1"},
                     title="Mute every cell above this one (pinned cells stay)"),
-        _stream_btn("Bring back all above", "/cell/mute-above", cls="ins-item",
+        _stream_btn("Unmute all above", "/cell/mute-above", cls="ins-item",
                     vals={"id": mid, "muted": "0"},
-                    title="Unmute every cell above this one"),
-        title="Bulk mute or unmute the cells above this one")]
+                    title="Unmute every cell above this one (including ones you muted yourself)"),
+        title="Bulk mute or unmute the cells above this one", menu_cls="type-menu")]
     return [
         _type_menu(m),
         _insert_menu(mid),
@@ -3593,11 +3594,18 @@ def cell_mute(id: str):
 
 
 @rt("/cell/mute-above", methods=["post"])
-def cell_mute_above(id: str, muted: int = 1):
-    """Mute (muted=1) or unmute (muted=0) every cell above this one in one save."""
+def cell_mute_above(id: str, muted: int = 0):
+    """Mute (muted=1) or unmute (muted=0) every cell above this one in one save.
+    Muting also drops the dialog's Claude/Codex CLI sessions (a resume would still
+    hold the muted cells' history), keeping the Claude cost tally."""
     backend = STATE["backend"]
     if hasattr(backend, "set_muted_above"):
-        backend.set_muted_above(cur("dialog"), id, bool(int(muted)))
+        d = cur("dialog")
+        n = backend.set_muted_above(d, id, bool(muted))
+        if muted and n:
+            claude_cli.CLI_SESSIONS.pop(d, None)
+            codex_cli.drop(d)
+        set_cur("flash", f"{'Muted' if muted else 'Unmuted'} {n} cell{'' if n == 1 else 's'} above")
     return Stream()
 
 

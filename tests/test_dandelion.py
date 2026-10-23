@@ -665,6 +665,44 @@ def test_set_muted_above_skips_self_and_pinned_and_counts(monkeypatch):
     assert not (a.muted or c.muted) and len(saves) == 2
 
 
+def test_set_muted_above_unknown_id_is_noop(monkeypatch):
+    b = MockBackend()
+    a, pin, c, cur_ = _fresh_dialog(b)
+    saves = []
+    monkeypatch.setattr(b, "_save", lambda: saves.append(1))
+    assert b.set_muted_above("fresh", "_missing", True) == 0
+    assert not any(m.muted for m in (a, pin, c, cur_)) and saves == []
+
+
+def test_fresh_start_drops_cli_sessions_but_keeps_cost(monkeypatch):
+    import dandelion.app as app
+    from dandelion import claude_cli, codex_cli
+    d = "cell/fresh-cli"
+    app.STATE["dialog"] = d
+    b = app.STATE["backend"]
+    b.messages(d)
+    q1 = b.add(d, "q1", "prompt")
+    q2 = b.add(d, "q2", "prompt")
+    claude_cli.CLI_SESSIONS[d] = {"sent": "", "mode": None, "model": None, "effort": None,
+                                  "id": "S"}
+    cost = {"usd": 1.0, "turns": 1, "input": 0, "output": 0}
+    claude_cli.CLI_COST[d] = dict(cost)
+    codex_cli.CODEX_SESSIONS[d] = {"sent": ""}
+    monkeypatch.setattr(claude_cli, "claude_bin", lambda: "claude")
+    ctx = build_context(b.messages(d), upto_id=q2.id)
+    cmd, _ = claude_cli._build_cmd(d, "q2", ctx, stream=False)
+    assert "--resume" in cmd                      # without the reset, the empty prefix resumes
+    claude_cli.CLI_SESSIONS[d] = {"sent": "", "mode": None, "model": None, "effort": None,
+                                  "id": "S"}
+    app.cell_mute_above(id=q2.id, muted=1)
+    assert q1.muted and d not in claude_cli.CLI_SESSIONS and d not in codex_cli.CODEX_SESSIONS
+    assert claude_cli.CLI_COST[d] == cost
+    cmd, _ = claude_cli._build_cmd(d, "q2", build_context(b.messages(d), upto_id=q2.id),
+                                   stream=False)
+    assert "--resume" not in cmd
+    claude_cli.CLI_COST.pop(d, None)
+
+
 def test_cell_mute_above_route_and_context_after_fresh_start():
     import dandelion.app as app
     app.STATE["dialog"] = "cell/mute-above"
@@ -685,8 +723,11 @@ def test_above_dropdown_not_on_first_cell():
     m = Msg(id="_x", msg_type="note", content="hi")
     assert "Start fresh here" not in to_xml(app.MsgRow(m, num=1))
     html = to_xml(app.MsgRow(m, num=2))
-    assert "Start fresh here" in html and "Bring back all above" in html
+    assert "Start fresh here" in html and "Unmute all above" in html
     assert "Mute every cell above this one (pinned cells stay)" in html
+    assert "including ones you muted yourself" in html
+    assert "Start fresh here" in to_xml(app._cell_edit(m, num=2))     # edit mode too
+    assert "Start fresh here" not in to_xml(app._cell_edit(m, num=1))
 
 
 # ---- Claude via the `claude` CLI (subscription / Max plan) -----------------

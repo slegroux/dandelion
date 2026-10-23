@@ -633,10 +633,12 @@ class _InMemoryBackend:
     def set_muted_above(self, dialog: str, msg_id: str, muted: bool) -> int:
         """Mute (or unmute) every cell strictly above `msg_id`, with one save; returns
         how many cells changed. Muting leaves pinned cells in context."""
+        lst = self._dialogs.get(dialog, [])
+        idx = next((i for i, m in enumerate(lst) if m.id == msg_id), None)
+        if idx is None:                       # unknown id (e.g. another tab's dialog): no-op
+            return 0
         changed = 0
-        for m in self._dialogs.get(dialog, []):
-            if m.id == msg_id:
-                break
+        for m in lst[:idx]:
             if muted and m.pinned:
                 continue
             if m.muted != bool(muted):
