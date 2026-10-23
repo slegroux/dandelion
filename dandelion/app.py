@@ -842,7 +842,7 @@ def _lib_menu(m):
     return _dropdown(label, form, title="Tag this cell into a library", menu_cls="ins-menu")
 
 
-def _ctx_buttons(m):
+def _ctx_buttons(m, num=None):
     """Type / Insert / Copy / Export / Lib / Mute / Pin / Delete — in both rendered
     and edit modes. Code cells also get an Export toggle (`#| export`) and, when
     libraries exist, a Lib picker (`#| export <lib>:<module>`)."""
@@ -858,6 +858,15 @@ def _ctx_buttons(m):
         if lib_menu is not None:
             btns.append(lib_menu)
     copy_menu = _copy_menu(mid)
+    above_menu = [] if num is None or num <= 1 else [_dropdown(
+        "Above ▾",
+        _stream_btn("Start fresh here", "/cell/mute-above", cls="ins-item",
+                    vals={"id": mid, "muted": "1"},
+                    title="Mute every cell above this one (pinned cells stay)"),
+        _stream_btn("Bring back all above", "/cell/mute-above", cls="ins-item",
+                    vals={"id": mid, "muted": "0"},
+                    title="Unmute every cell above this one"),
+        title="Bulk mute or unmute the cells above this one")]
     return [
         _type_menu(m),
         _insert_menu(mid),
@@ -865,6 +874,7 @@ def _ctx_buttons(m):
         _stream_btn("Muted" if m.muted else "In context", "/cell/mute",
                     cls="cell-btn ctx" + (" off" if m.muted else ""), vals={"id": mid},
                     title="Toggle whether this cell is sent to the AI as notebook context"),
+    ] + above_menu + [
         _stream_btn("Pinned" if m.pinned else "Pin", "/cell/pin",
                     cls="cell-btn pin" + (" on" if m.pinned else ""), vals={"id": mid},
                     title="Pin this cell so it stays in context even when older cells are trimmed"),
@@ -946,7 +956,7 @@ def _head(m, primary, num=None, show_actions=False):
     if m.msg_type == "code":
         bits.append(Span(m.id, cls="muted small cid"))
     bits.append(_tok_badge(m))
-    bits.append(Div(*primary, _link_btn(m), *_ctx_buttons(m),
+    bits.append(Div(*primary, _link_btn(m), *_ctx_buttons(m, num),
                     cls="cell-actions" + (" show" if show_actions else "")))
     return Div(*bits, cls="who")
 
@@ -3579,6 +3589,15 @@ def cell_mute(id: str):
     backend = STATE["backend"]
     if hasattr(backend, "set_muted"):
         backend.set_muted(cur("dialog"), id)
+    return Stream()
+
+
+@rt("/cell/mute-above", methods=["post"])
+def cell_mute_above(id: str, muted: int = 1):
+    """Mute (muted=1) or unmute (muted=0) every cell above this one in one save."""
+    backend = STATE["backend"]
+    if hasattr(backend, "set_muted_above"):
+        backend.set_muted_above(cur("dialog"), id, bool(int(muted)))
     return Stream()
 
 

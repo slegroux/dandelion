@@ -630,6 +630,22 @@ class _InMemoryBackend:
             self._save()
         return m
 
+    def set_muted_above(self, dialog: str, msg_id: str, muted: bool) -> int:
+        """Mute (or unmute) every cell strictly above `msg_id`, with one save; returns
+        how many cells changed. Muting leaves pinned cells in context."""
+        changed = 0
+        for m in self._dialogs.get(dialog, []):
+            if m.id == msg_id:
+                break
+            if muted and m.pinned:
+                continue
+            if m.muted != bool(muted):
+                m.muted = bool(muted)
+                changed += 1
+        if changed:
+            self._save()
+        return changed
+
     def set_pinned(self, dialog: str, msg_id: str, pinned: bool | None = None) -> Msg | None:
         """Toggle (or set) whether a cell is pinned into context (survives trimming)."""
         m = self._find(dialog, msg_id)

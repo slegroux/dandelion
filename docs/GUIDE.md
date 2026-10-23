@@ -390,6 +390,8 @@ Each cell shows an estimated **token count**, and a live meter at the foot of th
 dialog reads out the total context (`AI context ≈ N tokens · M/K cells in`) — so
 you can see yourself approaching the limit. **Pin** a cell (toggle next to Mute)
 to keep it in context even when older cells are trimmed.
+The **Above ▾** menu on every cell but the first has **Start fresh here**, which mutes
+every cell above (pinned cells stay), and **Bring back all above**, which unmutes them.
 
 This applies to the bundled **kernel** backend. On a **solveit** target,
 the server assembles the dialog context itself.
