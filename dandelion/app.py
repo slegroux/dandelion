@@ -2506,6 +2506,9 @@ def Page():
                     Details(Summary(_icon("download"), cls="gear icon-btn", title="Export this dialog"),
                             Div(A("Jupyter notebook (.ipynb)", href="/export/ipynb"),
                                 A("Markdown (.md)", href="/export/md"),
+                                Form(Button("Export folder…", type="submit", cls="export-link",
+                                            title="Choose a folder: writes the .md, its images and the .ipynb there"),
+                                     method="post", action="/export/folder", cls="export-folder"),
                                 A("Python package (.zip)", href="/export/package"),
                                 A("Publish to blog", href="/publish/blog", target="_blank",
                                   title="Build this dialog into your Quarto blog and open it"),
@@ -3838,6 +3841,62 @@ def export_md():
     msgs = STATE["backend"].messages(cur("dialog"))
     fname = cur("dialog").replace("/", "-") + ".md"
     return _download(to_markdown(msgs), fname, "text/markdown; charset=utf-8")
+
+
+def _choose_folder() -> str:
+    """Ask the OS for a folder (macOS's native picker; the server runs on this Mac).
+    Returns its path, or "" if the user cancelled. Raises ValueError where there is no
+    picker to show."""
+    import subprocess
+    import sys
+    if sys.platform != "darwin":
+        raise ValueError("the folder picker needs macOS")
+    script = ('tell application "System Events"\nactivate\n'
+              'POSIX path of (choose folder with prompt "Export this dialog into folder:")\n'
+              'end tell')
+    try:
+        r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise ValueError(f"couldn't open the folder picker ({e.__class__.__name__})") from e
+    if r.returncode != 0:
+        if "-128" in r.stderr:                      # the user pressed Cancel
+            return ""
+        raise ValueError("couldn't open the folder picker")
+    return r.stdout.strip()
+
+
+@rt("/export/folder", methods=["post"])
+def export_to_folder(request, dest: str = ""):
+    """Write this dialog as a folder (Markdown + image files + .ipynb) and flash the
+    written path, or why it couldn't be written. With no `dest`, the OS folder picker
+    chooses it, but only for a request from this machine: the dialog opens on the
+    server's screen."""
+    from pathlib import Path
+    from starlette.responses import RedirectResponse
+    from .export_nb import export_folder
+    dialog = cur("dialog")
+    if not dest.strip():
+        if (request.client.host if request.client else None) not in _LOOPBACK_PEERS:
+            set_cur("flash", "Choosing a folder works only on the machine running Dandelion.")
+            return RedirectResponse("/", status_code=303)
+        try:
+            dest = _choose_folder()
+        except ValueError as e:
+            set_cur("flash", f"Couldn't choose a folder: {e}")
+            return RedirectResponse("/", status_code=303)
+        if not dest:                                 # cancelled: nothing to say
+            return RedirectResponse("/", status_code=303)
+    path = Path(dest.strip()).expanduser()
+    if not path.is_absolute():
+        set_cur("flash", "Export folder must be an absolute path.")
+    else:
+        try:
+            md = export_folder(STATE["backend"].messages(dialog), path, dialog)
+            set_cur("flash", f"Exported to {md.parent}")
+        except (OSError, ValueError) as e:
+            set_cur("flash", f"Couldn't write the export folder: "
+                             f"{e.strerror if isinstance(e, OSError) and e.strerror else e}")
+    return RedirectResponse("/", status_code=303)
 
 
 @rt("/dialog/export/ipynb")

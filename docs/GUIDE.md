@@ -491,6 +491,16 @@ figures are captured as images, and anything implementing the notebook display
 protocol (`_repr_html_` for DataFrames, `_repr_png_` for images) renders too. A
 trailing `;` suppresses the last expression's value, Jupyter-style.
 
+#### Export a dialog as a folder
+
+The download menu's **Export folder…** opens the macOS folder picker (only when you
+use Dandelion on the Mac it runs on) and writes `<dialog>.md`, `<dialog>.ipynb`
+and a `<dialog>_files/` folder holding every plot (`.png`, `.jpg`, `.svg`), linked
+relatively from the Markdown, so the folder renders with its images on GitHub.
+It starts the `.md` with an `<!-- exported by Dandelion -->` marker and refuses to overwrite a
+same-named file that lacks it (re-exporting the same dialog is fine).
+The plain **Markdown (.md)** download still embeds images inline.
+
 ## Your work is saved
 
 Dialogs on the bundled **kernel** backend are persisted to disk — one JSON file
