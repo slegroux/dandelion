@@ -284,6 +284,11 @@ uv run python -m dandelion.cli doctor h100
 uv run python -m dandelion.cli serve        # http://localhost:8000
 ```
 
+One server per data folder: `serve` refuses to start while another Dandelion
+server uses the same `DANDELION_DATA`, because two would overwrite each other's
+dialogs. For a second server, give it its own folder and port, e.g.
+`DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 uv run python -m dandelion.cli serve`.
+
 In the UI, the top-right dropdown flips between `local` and `h100`. A green LED =
 live server; amber = running on the mock (with a banner telling you why).
 

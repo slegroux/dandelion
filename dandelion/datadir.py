@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import tarfile
 import time
@@ -281,18 +282,50 @@ def _pidfile() -> Path:
     return data_root() / ".serve.pid"
 
 
-def mark_serving() -> None:
-    """Record this `dandelion serve` process, so restore can refuse to run under it."""
+def serve_refusal(pid: int) -> str:
+    """Why a second `dandelion serve` on this data folder is refused."""
+    return (f"refusing to start: another Dandelion server (pid {pid}) already serves "
+            f"{data_root()}. "
+            "Two servers on one data folder overwrite each other's dialogs. "
+            f"Stop the other one with kill {pid} (just stop, if it's on the default ports), "
+            "or run this one on its own copy of the data, e.g. "
+            "DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 "
+            "uv run python -m dandelion.cli serve. "
+            f"If no server is running, delete {_pidfile()}")
+
+
+def claim_serving() -> None:
+    """Check that no other live server holds this data root and record this
+    `dandelion serve` process in .serve.pid (restore refuses to run under it).
+    Raises AppRunning when another server is live, or when the record can't be
+    written: an unrecorded server would leave the folder open to a second one."""
     import atexit
-    f = _pidfile()
-    if running_server_pid():
-        return                         # don't clobber a live server's record; if
-    try:                               # this serve then fails to bind, it's intact
+    f, me = _pidfile(), os.getpid()
+    other = running_server_pid()
+    if other:
+        raise AppRunning(serve_refusal(other))
+    tmp = f.with_name(f"{f.name}.{me}.tmp")          # unique, and skipped by backups
+    try:
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text(str(os.getpid()))
-    except OSError:
-        return
-    me = os.getpid()
+        tmp.write_text(str(me))
+        try:
+            try:
+                os.link(tmp, f)                  # creates f with its content, or fails
+            except FileExistsError:              # stale, or a server that just won the race
+                other = running_server_pid()
+                if other:
+                    raise AppRunning(serve_refusal(other)) from None
+                tmp.replace(f)
+            except OSError:                      # no hard links here (some FUSE mounts)
+                fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+                with os.fdopen(fd, "w") as fh:
+                    fh.write(str(me))
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as e:
+        raise AppRunning(f"not starting: could not record this server in {f} ({e.strerror or e}). "
+                         "Without that record a second server could start on this folder. "
+                         "Fix the folder's permissions, or use another DANDELION_DATA") from e
 
     def _clear():
         try:
@@ -315,13 +348,32 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+_SERVER_CMD = re.compile(r"\b(dandelion|pappus|sidekick)(\.cli)?\s+serve\b", re.IGNORECASE)
+
+
+def _looks_like_dandelion(pid: int) -> bool:
+    """Whether `pid` runs `dandelion serve` (also as pappus or sidekick, its names
+    before the renames), so a stale pid file whose pid the OS reused for an
+    unrelated process doesn't count as a server. If ps can't answer (missing,
+    timing out), assume it does."""
+    import subprocess
+    try:
+        r = subprocess.run(["ps", "-p", str(pid), "-o", "command="], check=False,
+                           capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    if r.returncode != 0 or not r.stdout.strip():
+        return _pid_alive(pid)      # ps failed: gone since the check, or can't tell
+    return bool(_SERVER_CMD.search(r.stdout))
+
+
 def running_server_pid(root: Path | None = None) -> int | None:
     """PID of a live `dandelion serve` using this data root (or `root`), else None."""
     try:
         pid = int(((root / ".serve.pid") if root else _pidfile()).read_text().strip())
     except (OSError, ValueError):
         return None
-    return pid if pid != os.getpid() and _pid_alive(pid) else None
+    return pid if pid != os.getpid() and _pid_alive(pid) and _looks_like_dandelion(pid) else None
 
 
 class AppRunning(RuntimeError):

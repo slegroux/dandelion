@@ -198,6 +198,8 @@ def cmd_restore(args):
 
 def cmd_serve(_):
     import uvicorn
+
+    from . import datadir
     # Default to loopback: the UI is single-user with global state and holds your
     # API keys. Opt into network exposure explicitly via DANDELION_HOST=0.0.0.0.
     host = os.environ.get("DANDELION_HOST", "127.0.0.1")
@@ -206,7 +208,7 @@ def cmd_serve(_):
     # needs an import string rather than the app object so uvicorn can re-import
     # the module in the worker; without it we pass the object directly.
     reload = os.environ.get("DANDELION_RELOAD", "").lower() in ("1", "true", "yes")
-    print(f"Dandelion UI -> http://{host}:{port}" + ("  (auto-reload)" if reload else ""))
+    _ignore_repo_data_env()
     if host not in ("127.0.0.1", "localhost"):
         # The app has no auth layer of its own, so a non-loopback bind exposes
         # unauthenticated code execution and your stored API keys to the network.
@@ -218,10 +220,17 @@ def cmd_serve(_):
             f"refusing to bind {host}: the UI has no authentication, so this would "
             "expose unauthenticated code execution and your stored API keys. "
             "Use an SSH tunnel for remote access (see the comment in cli.py).")
+    # before anything writes to the folder (migrations, the "Dandelion UI" line)
+    other = datadir.running_server_pid()
+    if other:
+        raise SystemExit(datadir.serve_refusal(other))
+    print(f"Dandelion UI -> http://{host}:{port}" + ("  (auto-reload)" if reload else ""))
     if not _move_out_of_repo():
         raise SystemExit("not starting: stop the older server first (see above)")
-    from .datadir import mark_serving
-    mark_serving()
+    try:
+        datadir.claim_serving()
+    except datadir.AppRunning as e:
+        raise SystemExit(str(e)) from None
     if reload:
         uvicorn.run("dandelion.app:app", host=host, port=port,
                     reload=True, reload_dirs=[os.path.dirname(__file__)])
