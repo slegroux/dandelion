@@ -287,7 +287,7 @@ uv run python -m dandelion.cli serve        # http://localhost:8000
 One server per data folder: `serve` refuses to start while another Dandelion
 server uses the same `DANDELION_DATA`, because two would overwrite each other's
 dialogs. For a second server, give it its own folder and port, e.g.
-`DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 uv run python -m dandelion.cli serve`.
+`mkdir -p /tmp/dandelion-test && touch /tmp/dandelion-test/.dandelion-store && DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 uv run python -m dandelion.cli serve` (the marker file lets a new folder save).
 
 In the UI, the top-right dropdown flips between `local` and `h100`. A green LED =
 live server; amber = running on the mock (with a banner telling you why).
@@ -542,7 +542,9 @@ default needs a `.dandelion-store` marker, which **Use this folder** writes; wit
 it (an unmounted drive, say pCloud not running) Dandelion refuses the folder, writes
 nothing there, and shows a banner until you pick another folder or use this one. The folder in use is fixed at start, so a change in Settings (or a drive that
 mounts late) only counts after a restart. An existing store that has no marker yet is
-marked automatically; with `DANDELION_DATA` you can also `touch <folder>/.dandelion-store`.
+marked automatically when the folder comes from `DANDELION_DATA` (or the default folder is a link);
+for a folder chosen in Settings, "Use this folder" writes the marker. With `DANDELION_DATA` you can also
+`touch <folder>/.dandelion-store`.
 
 The notebook store also protects itself. Every save keeps the previous version
 as `dialogs-<target>.json.bak`, and while you work a timestamped copy goes to

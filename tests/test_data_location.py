@@ -159,6 +159,25 @@ def test_the_marker_is_not_carried_in_a_backup(tmp_path, monkeypatch):
         assert not any(n.endswith(datadir.MARKER) for n in t.getnames())
 
 
+def test_the_pointer_file_is_not_carried_in_a_backup(home, tmp_path, monkeypatch):
+    root = home / ".config" / "dandelion"
+    root.mkdir(parents=True)
+    (root / "dialogs-kernel.json").write_text('{"d": []}')
+    (root / "data-root").write_text(str(tmp_path / "elsewhere"))   # this machine's pointer
+    monkeypatch.setenv("DANDELION_DATA", str(root))      # what the 'back up the old root' hint does
+    arc, _ = datadir.backup(tmp_path / "b.tar.gz")
+    with tarfile.open(arc) as t:
+        names = t.getnames()
+    assert any(n.endswith("dialogs-kernel.json") for n in names)
+    assert not any(n.endswith("data-root") for n in names)
+
+
+def test_the_second_server_hint_creates_the_marker(tmp_path, monkeypatch):
+    monkeypatch.setenv("DANDELION_DATA", str(tmp_path / "one"))
+    msg = datadir.serve_refusal(12345)
+    assert "touch /tmp/dandelion-test/.dandelion-store" in msg
+
+
 # ---- Settings ----------------------------------------------------------------
 def test_settings_post_sets_and_clears_the_pointer_without_moving_data(home, tmp_path):
     from dandelion import app
@@ -447,7 +466,7 @@ def test_sf1_case_variants_of_home_and_repo_are_refused(home, tmp_path, monkeypa
 def test_sf2_the_message_names_the_old_root_to_back_up(home, tmp_path):
     d = _mk(tmp_path / "new")
     ok, msg = datadir.use_folder(str(d))
-    assert ok and f"DANDELION_DATA='{home / '.config' / 'dandelion'}' dandelion backup" in msg
+    assert ok and f"DANDELION_DATA='{home / '.config' / 'dandelion'}' uv run python -m dandelion.cli backup" in msg
 
 
 def test_sf3_make_dirs_never_creates_a_non_default_root(tmp_path, monkeypatch):

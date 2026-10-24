@@ -42,7 +42,7 @@ REPO_DATA = Path(__file__).resolve().parent.parent / "data"
 # rolling save-backups and half-written temp files are not worth carrying over
 _SKIP_SUFFIXES = (".bak", ".tmp", ".restore-tmp", ".tar.gz")   # .tar.gz: older backups
 MARKER = ".dandelion-store"      # says "this folder is a data store"; not part of the data
-_SKIP_NAMES = {".DS_Store", ".serve.pid", MARKER}
+_SKIP_NAMES = {".DS_Store", ".serve.pid", MARKER, "data-root"}   # data-root: this machine's pointer
 _SKIP_DIRS = {".git", "__pycache__", ".ipynb_checkpoints", ".quarto"}
 
 
@@ -315,8 +315,8 @@ def use_folder(path: str, confirm: bool = False) -> tuple[bool, str]:
         return False, f"Could not use {p}: {e.strerror or e}"
     return True, (f"Saved. Dandelion will use {p} after you restart it. Nothing was moved or "
                   "copied: to bring your dialogs along, run "
-                  f"DANDELION_DATA='{old}' dandelion backup now (a plain dandelion backup would "
-                  "archive the new folder), then dandelion restore after the restart.")
+                  f"DANDELION_DATA='{old}' uv run python -m dandelion.cli backup now (a plain "
+                  "backup would archive the new folder), then restore it after the restart.")
 
 
 def _write_pointer(p: Path) -> None:
@@ -585,8 +585,9 @@ def serve_refusal(pid: int) -> str:
             "Two servers on one data folder overwrite each other's dialogs. "
             f"Stop the other one with kill {pid} (just stop, if it's on the default ports), "
             "or run this one on its own copy of the data, e.g. "
+            "mkdir -p /tmp/dandelion-test && touch /tmp/dandelion-test/.dandelion-store && "
             "DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 "
-            "uv run python -m dandelion.cli serve. "
+            "uv run python -m dandelion.cli serve (the marker lets a new folder save). "
             f"If no server is running, delete {_pidfile()}")
 
 
