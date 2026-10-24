@@ -24,12 +24,12 @@ def _path() -> Path:
 def load() -> list[dict]:
     """The registered libraries (``[{name, pkg, path}, ...]``), or ``[]``."""
     p = _path()
-    if not p.exists():
-        return []
     try:
+        if not p.exists():
+            return []
         data = json.loads(p.read_text())
         return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):      # unreadable root (e.g. macOS denied the mount)
         return []
 
 

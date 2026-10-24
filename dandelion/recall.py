@@ -194,9 +194,9 @@ def default_schedule_path() -> Path:
 def load_schedule(path: str | Path | None = None) -> dict:
     """Load the review schedule, or an empty dict if none/unreadable."""
     p = Path(path) if path else default_schedule_path()
-    if not p.exists():
-        return {}
     try:
+        if not p.exists():
+            return {}
         data = json.loads(p.read_text())
         return data if isinstance(data, dict) else {}
     except (ValueError, OSError):
