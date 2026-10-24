@@ -17,6 +17,7 @@ import uuid
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 
+from . import datadir as _datadir
 from .targets import Target, effective_default_model
 
 
@@ -56,8 +57,7 @@ class Msg:
 
 # ---- on-disk persistence for the in-memory backends -------------------------
 def _data_dir() -> Path:
-    from .datadir import data_root
-    return data_root()
+    return _datadir.data_root()
 
 
 # Dialogs are saved per store key (the target name) as one JSON file, so your
@@ -193,7 +193,8 @@ def _write_private_dialogs(key: str, names: set[str]) -> None:
     file entirely so an empty list leaves no trace."""
     p = _private_dialogs_path(key)
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        _datadir.check_writable(p)
+        _datadir.make_dirs(p.parent)
         if not names:
             p.unlink(missing_ok=True)
             return
@@ -233,7 +234,7 @@ def _maybe_snapshot(p: Path) -> None:
         return
     import shutil
     d = _snapshot_dir(p)
-    d.mkdir(parents=True, exist_ok=True)
+    _datadir.make_dirs(d)
     from datetime import datetime
     dst = d / f"{p.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.json"
     shutil.copy2(p, dst)
@@ -266,7 +267,8 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
     local = _local_store_path(key)
     with _SAVE_LOCK:
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
+            _datadir.check_writable(p)  # an unmarked folder: the banner says so
+            _datadir.make_dirs(p.parent)
             private_names = _read_private_dialogs(key)
             public = {}
             private = {}
@@ -283,6 +285,8 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
                 _write_dialog_store(local, private)
             elif local.exists():
                 local.unlink()
+        except _datadir.StoreRefused as e:
+            _datadir.warn_refused(e)
         except OSError as e:           # never let a disk hiccup break the app,
             import sys                 # but don't hide it either
             print(f"[dandelion] WARNING: could not save {p}: {e}", file=sys.stderr)

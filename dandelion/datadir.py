@@ -2,7 +2,9 @@
 
 All user data is local to the machine and never part of the git repo:
 
-    ~/.config/dandelion/          (override with DANDELION_DATA)
+    ~/.config/dandelion/          (override with DANDELION_DATA, or the Settings
+                                   "Data folder", which saves a pointer file
+                                   ~/.config/dandelion/data-root)
         dialogs-<target>.json            notebooks: cells, outputs, sidebar list
         dialogs-<target>.local.json      dialogs marked "keep local only"
         dialogs-<target>.private         names of those dialogs
@@ -11,6 +13,11 @@ All user data is local to the machine and never part of the git repo:
         blog/                            the Quarto blog project
         papers/                          reading library (DANDELION_PAPERS)
         tools.json, secrets.json         Ask-AI tool policy, API keys
+                                         (these two always stay in ~/.config/dandelion)
+
+A data folder other than ~/.config/dandelion must hold a `.dandelion-store` marker,
+or it is refused and nothing is written there (an unmounted drive looks like an
+empty folder). Only "Use this folder" in Settings creates the marker.
 
 `backup()` packs that into one .tar.gz and `restore()` unpacks it on a new
 install (`dandelion backup` / `dandelion restore`). API keys are left out of a
@@ -34,13 +41,300 @@ REPO_DATA = Path(__file__).resolve().parent.parent / "data"
 
 # rolling save-backups and half-written temp files are not worth carrying over
 _SKIP_SUFFIXES = (".bak", ".tmp", ".restore-tmp", ".tar.gz")   # .tar.gz: older backups
-_SKIP_NAMES = {".DS_Store", ".serve.pid"}
+MARKER = ".dandelion-store"      # says "this folder is a data store"; not part of the data
+_SKIP_NAMES = {".DS_Store", ".serve.pid", MARKER, "data-root"}   # data-root: this machine's pointer
 _SKIP_DIRS = {".git", "__pycache__", ".ipynb_checkpoints", ".quarto"}
 
 
+def config_dir() -> Path:
+    """Where keys, tool policy and the data-folder pointer live, whatever the data root."""
+    return Path.home() / ".config" / "dandelion"
+
+
+def _pointer_file() -> Path:
+    return config_dir() / "data-root"
+
+
+def _samefile(a: Path, b: Path) -> bool:
+    """Same file by device and inode, so case variants and links of a path match
+    (APFS is case-insensitive and resolve() keeps the case you typed)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _dangerous(p: Path) -> bool:
+    """Folders that must never be a data folder: /, $HOME, anything above the config
+    dir (backup would tar it), and the repo (where `just sync` once pushed data)."""
+    repo = REPO_DATA.parent
+    if p in config_dir().parents or any(_samefile(p, b) for b in (Path(p.anchor or "/"), Path.home(), *config_dir().parents)):
+        return True
+    return any(_samefile(q, repo) for q in (p, *p.parents))
+
+
+def _pointer_state() -> tuple[Path | None, str | None]:
+    """(folder, None) for a good pointer file, (None, problem) for one that is
+    there but not exactly one usable absolute path, (None, None) when absent."""
+    try:
+        text = _pointer_file().read_text()
+    except FileNotFoundError:
+        return None, None
+    except OSError as e:
+        return None, f"unreadable: {e.strerror or e}"
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    if len(lines) != 1 or "\0" in lines[0]:
+        return None, "it must hold exactly one path"
+    p = Path(lines[0]).expanduser()
+    if not p.is_absolute():
+        return None, "the path is not absolute"
+    if _dangerous(p):
+        return None, f"{p} cannot be a data folder"
+    return p, None
+
+
+def read_pointer() -> Path | None:
+    """The folder a good pointer file names, else None."""
+    return _pointer_state()[0]
+
+
+def _resolve() -> tuple[Path, str, str | None]:
+    """(root, source, problem) as the environment and pointer file say right now."""
+    env = os.environ.get("DANDELION_DATA")
+    if env:
+        return Path(env).expanduser(), "env", None
+    p, bad = _pointer_state()
+    if p:
+        return p, "pointer", None
+    if bad:
+        return config_dir(), "pointer", f"The data-root setting is invalid ({_pointer_file()}): {bad}"
+    return config_dir(), "default", None
+
+
+# The root and whether it is refused are decided once per process (freeze_root, at
+# serve start) and stay that way until restart: the dialogs in memory were loaded
+# from that root, so a pointer change or a mount appearing later must not redirect
+# saves. Without it (tests, one-shot CLI commands) everything is looked up afresh.
+_FROZEN: dict | None = None
+
+
 def data_root() -> Path:
-    base = os.environ.get("DANDELION_DATA")
-    return Path(base).expanduser() if base else Path.home() / ".config" / "dandelion"
+    return _FROZEN["root"] if _FROZEN else _resolve()[0]
+
+
+def data_root_source() -> str:
+    """Why data_root() is what it is: 'env' | 'pointer' | 'default'."""
+    return _FROZEN["source"] if _FROZEN else _resolve()[1]
+
+
+def pending_root() -> Path | None:
+    """The folder a restart would use, when that differs from the one in use."""
+    if not _FROZEN:
+        return None
+    root, _, bad = _resolve()
+    return None if bad or root == _FROZEN["root"] else root
+
+
+class StoreRefused(OSError):
+    """The data folder has no marker; nothing may be written to it. An OSError, so
+    the best-effort savers that already swallow disk errors swallow this too."""
+
+
+def _is_default(root: Path) -> bool:
+    """The default root is exempt from the marker, but only as a real directory: a
+    link (adopt_legacy_root keeps a user's link into pCloud) may point at an empty mount."""
+    cfg = config_dir()
+    return not cfg.is_symlink() and _same(root, cfg)
+
+
+def _marker_problem(root: Path) -> str | None:
+    """None when the marker is there, 'missing', or why the folder can't be read."""
+    try:
+        os.stat(root / MARKER)
+        return None
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError as e:
+        return f"Cannot access {root} ({e.strerror or e})."
+
+
+def _refusal(root: Path, source: str, bad: str | None) -> str | None:
+    if bad:
+        return bad
+    if _is_default(root):
+        return None
+    m = _marker_problem(root)
+    if m is None:
+        return None
+    if m != "missing":
+        return m
+    base = (f"{root} has no {MARKER} marker; the folder may be an unmounted drive "
+            "(e.g. pCloud not running). Nothing is saved there. ")
+    if source == "env":
+        return base + (f"Start the drive and restart Dandelion; if this is the right folder, run "
+                       f"touch '{root}/{MARKER}' or unset DANDELION_DATA.")
+    if config_dir().is_symlink() and _same(root, config_dir()):
+        return base + (f"{config_dir()} is a link to another place. Start the drive and restart "
+                       f"Dandelion, or run touch '{root}/{MARKER}' if it is the right folder.")
+    return base + ("Start your cloud drive, then restart Dandelion; or open Settings to pick "
+                   "another folder or use this one.")
+
+
+def store_refusal() -> str | None:
+    """Why the data root is refused (a message for the UI), or None when it may be
+    used. Once frozen, a refusal stays until restart; an accepted root is still
+    re-checked on every call, so a mount that goes away stops the writes."""
+    if _FROZEN:
+        return _FROZEN["refusal"] or _refusal(_FROZEN["root"], _FROZEN["source"], None)
+    return _refusal(*_resolve())
+
+
+def check_writable(path: Path | str | None = None) -> None:
+    """Call before writing under the data root. Raises StoreRefused while the root
+    is refused; `path` limits that to paths inside the root (papers may live elsewhere)."""
+    msg = store_refusal()
+    if msg and (path is None or _same(Path(path), data_root())
+                or data_root() in Path(path).parents):
+        raise StoreRefused(msg)
+
+
+_warned: set[str] = set()
+
+
+def warn_refused(e: Exception) -> None:
+    """Say on stderr, once per message, that a save was refused."""
+    import sys
+    if str(e) not in _warned:
+        _warned.add(str(e))
+        print(f"[dandelion] WARNING: not saving: {e}", file=sys.stderr)
+
+
+def make_dirs(d: Path) -> None:
+    """mkdir -p for a folder under the data root without ever creating a non-default
+    root itself (a mount that vanished after check_writable must fail, not be recreated)."""
+    root = data_root()
+    if _is_default(root) or (d != root and root not in d.parents):
+        d.mkdir(parents=True, exist_ok=True)
+        return
+    if d == root:
+        return                       # a non-default root must already be there
+    cur = root
+    for part in d.relative_to(root).parts:
+        cur = cur / part
+        cur.mkdir(exist_ok=True)
+
+
+def claim_default_root() -> None:
+    """Write the marker into the default root so it is never refused. Silent and
+    best-effort. Other roots get theirs from use_folder, or from freeze_root when
+    they already hold a store."""
+    root = _resolve()[0]
+    if not _is_default(root) or (root / MARKER).is_file():
+        return
+    with contextlib.suppress(OSError):
+        root.mkdir(parents=True, exist_ok=True)
+        (root / MARKER).write_text("")
+
+
+def _has_store(root: Path) -> bool:
+    """A dialogs-<target>.json that reads as a store with at least one dialog: an
+    unmounted mountpoint is empty, and a stray empty or local-only file proves nothing."""
+    from .client import _parse_store
+    try:
+        return any(f.is_file() and not f.name.endswith(".local.json") and _parse_store(f)
+                   for f in root.glob("dialogs-*.json"))
+    except OSError:
+        return False
+
+
+def freeze_root() -> None:
+    """Decide the data root and whether it is refused, once, for this process (called
+    at serve start and when the backend is built). A root that already holds a
+    dialogs-*.json is a real store, since an unmounted drive is empty: it is
+    accepted and marked. Anything else unmarked stays refused until restart."""
+    import sys
+    global _FROZEN
+    if _FROZEN:
+        return
+    claim_default_root()
+    root, source, bad = _resolve()
+    msg = _refusal(root, source, bad)
+    # pointer roots get their marker from use_folder, never from this rule
+    if msg and not bad and _marker_problem(root) == "missing" \
+            and (source == "env" or (config_dir().is_symlink() and _same(root, config_dir()))) \
+            and _has_store(root):
+        with contextlib.suppress(OSError):
+            (root / MARKER).write_text("")
+            print(f"[dandelion] marked existing store at {root}", file=sys.stderr)
+            msg = None
+    _FROZEN = {"root": root, "source": source, "refusal": msg}
+    if msg:
+        print(f"[dandelion] WARNING: {msg}", file=sys.stderr)
+
+
+def unfreeze_root() -> None:
+    """Back to looking the root up on every call (test fixture)."""
+    global _FROZEN
+    _FROZEN = None
+    _warned.clear()
+
+
+def use_folder(path: str, confirm: bool = False) -> tuple[bool, str]:
+    """Settings "Use this folder": make `path` the data folder from the next start.
+    Creates only the folder itself (its parent must exist), writes the marker, and
+    moves or copies nothing. Unless it already carries the marker, `confirm` is
+    needed when the folder is empty (an unmounted drive looks empty), holds other
+    files, or is the root being refused now. Returns (ok, message)."""
+    p = Path(path.strip()).expanduser() if path.strip() else None
+    if p is None or not p.is_absolute() or "\0" in str(p):
+        return False, "Give an absolute path (it may start with ~)."
+    if _dangerous(p):
+        return False, f"{p} cannot be a data folder (pick a folder of its own)."
+    drive = ("Is your cloud drive running? An unmounted drive looks like an empty folder. "
+             "If this really is the folder you mean, tick the confirmation and press the "
+             "button again.")
+    old = data_root()
+    try:
+        if p.exists() and not p.is_dir():
+            return False, f"{p} is not a folder."
+        if not p.parent.is_dir():
+            return False, f"{p.parent} does not exist. {drive.split(' If ')[0]}"
+        marked = (p / MARKER).is_file()
+        if not marked and not confirm:
+            if p.is_dir() and any(p.iterdir()):
+                return False, (f"{p} already holds files but no {MARKER} marker. If it is "
+                               "the folder you mean, tick the confirmation and press the "
+                               "button again.")
+            if p.is_dir() or not any(p.parent.iterdir()) \
+                    or (_same(p, data_root()) and store_refusal()):
+                return False, drive
+        p.mkdir(exist_ok=True)
+        (p / MARKER).write_text("")
+        _write_pointer(p)
+    except OSError as e:
+        return False, f"Could not use {p}: {e.strerror or e}"
+    return True, (f"Saved. Dandelion will use {p} after you restart it. Nothing was moved or "
+                  "copied: to bring your dialogs along, run "
+                  f"DANDELION_DATA='{old}' uv run python -m dandelion.cli backup now (a plain "
+                  "backup would archive the new folder), then restore it after the restart.")
+
+
+def _write_pointer(p: Path) -> None:
+    f = _pointer_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f"{f.name}.tmp")
+    tmp.write_text(str(p) + "\n")
+    tmp.replace(f)
+
+
+def clear_pointer() -> tuple[bool, str]:
+    """Settings "Back to the default": forget the pointer; the data stays where it is."""
+    try:
+        _pointer_file().unlink(missing_ok=True)
+    except OSError as e:
+        return False, f"Could not clear the setting: {e.strerror or e}"
+    return True, (f"Saved. Dandelion will use {config_dir()} after you restart it. "
+                  "Nothing was moved.")
 
 
 # The data root's names before the renames, newest first.
@@ -153,6 +447,8 @@ def rekey_papers(home: Path | None = None) -> int:
     """Re-key the current root's papers against every old root. Cheap and
     idempotent, so the CLI runs it on every start: it finishes a move whose
     re-keying was cut short."""
+    if store_refusal():
+        return 0
     return _rekey_moved_papers(data_root(), _legacy_roots((home or Path.home()) / ".config"))
 
 
@@ -249,7 +545,7 @@ def migrate_repo_data(old: Path | None = None) -> list[str]:
     from . import paper
     old = old or REPO_DATA
     new = data_root()
-    if not old.is_dir() or _same(old, new):
+    if not old.is_dir() or _same(old, new) or store_refusal():
         return []
     new.mkdir(parents=True, exist_ok=True)
     moved = [f"papers/{m}" for m in paper.migrate_legacy_cache(old / "papers")]
@@ -289,8 +585,9 @@ def serve_refusal(pid: int) -> str:
             "Two servers on one data folder overwrite each other's dialogs. "
             f"Stop the other one with kill {pid} (just stop, if it's on the default ports), "
             "or run this one on its own copy of the data, e.g. "
+            "mkdir -p /tmp/dandelion-test && touch /tmp/dandelion-test/.dandelion-store && "
             "DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 "
-            "uv run python -m dandelion.cli serve. "
+            "uv run python -m dandelion.cli serve (the marker lets a new folder save). "
             f"If no server is running, delete {_pidfile()}")
 
 
@@ -301,12 +598,14 @@ def claim_serving() -> None:
     written: an unrecorded server would leave the folder open to a second one."""
     import atexit
     f, me = _pidfile(), os.getpid()
+    if store_refusal():
+        return                         # a refused folder gets no record (and nothing else)
     other = running_server_pid()
     if other:
         raise AppRunning(serve_refusal(other))
     tmp = f.with_name(f"{f.name}.{me}.tmp")          # unique, and skipped by backups
     try:
-        f.parent.mkdir(parents=True, exist_ok=True)
+        make_dirs(f.parent)
         tmp.write_text(str(me))
         try:
             try:
@@ -493,6 +792,7 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
         # edit, so restoring under it would be silently undone
         raise AppRunning(f"the app is running (pid {pid}); stop it first (just stop). "
                          f"If it isn't, delete {_pidfile()}")
+    check_writable()
     secret = secrets_path(write=True)
     restored, skipped, index = [], [], {}
     with tarfile.open(Path(archive).expanduser(), "r:gz") as tar:
@@ -515,7 +815,7 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
             if dst.is_dir() or (dst.exists() and not force):
                 skipped.append(f"{m.name} ({'is a directory' if dst.is_dir() else 'exists'})")
                 continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
+            make_dirs(dst.parent)
             tmp = dst.with_name(dst.name + ".restore-tmp")
             try:
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

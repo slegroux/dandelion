@@ -17,9 +17,17 @@ def _isolated_user_data(tmp_path, monkeypatch):
     # (e.g. the one-time ~/.config migration) must never reach the real home.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    (tmp_path / ".dandelion-store").write_text("")       # a non-default root needs its marker
     monkeypatch.setenv("DANDELION_PAPERS", str(tmp_path / "papers"))
     monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "secrets.json"))
     monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "tools.json"))
+    from dandelion import datadir
+    datadir.unfreeze_root()                      # serve freezes the root; tests look it up afresh
+    app = sys.modules.get("dandelion.app")
+    if app is not None:
+        app.STATE.pop("_target_ready", None)
+    yield
+    datadir.unfreeze_root()
 
 
 def pytest_configure(config):

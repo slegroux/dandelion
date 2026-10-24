@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 
 from .client import build_context
+from .datadir import check_writable, make_dirs
 
 
 # ---- prompt + parse ---------------------------------------------------------
@@ -193,9 +194,9 @@ def default_schedule_path() -> Path:
 def load_schedule(path: str | Path | None = None) -> dict:
     """Load the review schedule, or an empty dict if none/unreadable."""
     p = Path(path) if path else default_schedule_path()
-    if not p.exists():
-        return {}
     try:
+        if not p.exists():
+            return {}
         data = json.loads(p.read_text())
         return data if isinstance(data, dict) else {}
     except (ValueError, OSError):
@@ -207,7 +208,8 @@ def save_schedule(schedule: dict, path: str | Path | None = None) -> None:
     raises (same posture as the dialogs store's own save)."""
     p = Path(path) if path else default_schedule_path()
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        check_writable(p)
+        make_dirs(p.parent)
         p.write_text(json.dumps(schedule, indent=2))
     except OSError:
         pass

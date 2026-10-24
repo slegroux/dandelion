@@ -162,6 +162,10 @@ def cmd_backup(args):
     if not _adopt_legacy_root():
         print("backup refused: stop the older server first (see above)", file=sys.stderr)
         return 1
+    refused = datadir.store_refusal()
+    if refused:
+        print(f"backup refused: {refused}", file=sys.stderr)
+        return 1
     with_secrets = "--with-secrets" in args
     rest = [a for a in args if a != "--with-secrets"]
     dest, n = datadir.backup(rest[0] if rest else None, with_secrets=with_secrets)
@@ -185,7 +189,7 @@ def cmd_restore(args):
         return 2
     try:
         restored, skipped = datadir.restore(rest[0], force=force)
-    except datadir.AppRunning as e:
+    except (datadir.AppRunning, datadir.StoreRefused) as e:
         print(f"restore refused: {e}", file=sys.stderr)
         return 1
     print(f"Restored {len(restored)} files into {datadir.data_root()}")
@@ -227,6 +231,7 @@ def cmd_serve(_):
     print(f"Dandelion UI -> http://{host}:{port}" + ("  (auto-reload)" if reload else ""))
     if not _move_out_of_repo():
         raise SystemExit("not starting: stop the older server first (see above)")
+    datadir.freeze_root()          # the root and any refusal hold until restart
     try:
         datadir.claim_serving()
     except datadir.AppRunning as e:

@@ -146,10 +146,14 @@ def _module_files(modules: dict[str, list[dict]]) -> dict[str, str]:
 def write_files(dest: str, files: dict[str, str]) -> list[str]:
     """Write ``{relpath: content}`` under ``dest``, creating dirs. Returns paths."""
     import os
+    from pathlib import Path
+
+    from .datadir import check_writable, make_dirs
+    check_writable(dest)
     written = []
     for rel, content in sorted(files.items()):
         path = os.path.join(dest, rel)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        make_dirs(Path(os.path.dirname(path)))
         with open(path, "w") as f:
             f.write(content)
         written.append(path)

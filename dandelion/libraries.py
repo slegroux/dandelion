@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .datadir import check_writable, make_dirs
 from .export import slug
 
 
@@ -23,19 +24,20 @@ def _path() -> Path:
 def load() -> list[dict]:
     """The registered libraries (``[{name, pkg, path}, ...]``), or ``[]``."""
     p = _path()
-    if not p.exists():
-        return []
     try:
+        if not p.exists():
+            return []
         data = json.loads(p.read_text())
         return data if isinstance(data, list) else []
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError):      # unreadable root (e.g. macOS denied the mount)
         return []
 
 
 def save(libs: list[dict]) -> None:
     p = _path()
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
+        check_writable(p)
+        make_dirs(p.parent)
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(libs, indent=2))
         tmp.replace(p)                       # atomic

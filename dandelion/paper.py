@@ -18,6 +18,8 @@ import socket
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .datadir import check_writable, make_dirs
+
 
 def _cache_dir() -> Path:
     """Where papers live: uploads, converted markdown, figures, sources.json.
@@ -192,7 +194,8 @@ def _store_assets(md: str, images: dict, key: str) -> str:
         if safe != name or not safe:
             continue                             # refuse path-shaped names
         try:
-            adir.mkdir(parents=True, exist_ok=True)
+            check_writable(adir)
+            make_dirs(adir)
             img.save(adir / safe)                # format inferred from the extension
         except Exception:  # noqa: BLE001 — a figure we can't save must not kill the text
             continue
@@ -287,7 +290,8 @@ def convert(path: str) -> tuple[str, str]:
     # forever with no way to retry short of deleting the cache file.
     if md and md.strip():
         try:
-            cp.parent.mkdir(parents=True, exist_ok=True)
+            check_writable(cp)
+            make_dirs(cp.parent)
             cp.write_text(md)
         except OSError:
             pass
@@ -412,7 +416,8 @@ def _save_pdf_bytes(data: bytes) -> str:
     """Save downloaded PDF bytes under the uploads cache (content-hashed, so the
     same paper reuses its conversion)."""
     updir = _cache_dir() / "uploads"
-    updir.mkdir(parents=True, exist_ok=True)
+    check_writable(updir)
+    make_dirs(updir)
     dst = updir / (hashlib.sha1(data).hexdigest()[:16] + ".pdf")
     if not dst.exists():
         dst.write_bytes(data)
@@ -471,7 +476,8 @@ def convert_url(url: str) -> tuple[str, str]:
     md = md or ""
     if md.strip():
         try:
-            cp.parent.mkdir(parents=True, exist_ok=True)
+            check_writable(cp)
+            make_dirs(cp.parent)
             cp.write_text(md)
         except OSError:
             pass

@@ -267,7 +267,10 @@ def _load_manifest(dest: str) -> dict[str, str]:
 
 def _save_manifest(dest: str, manifest: dict[str, str]) -> None:
     import os
-    os.makedirs(dest, exist_ok=True)
+    from pathlib import Path
+
+    from .datadir import make_dirs
+    make_dirs(Path(dest))
     with open(_manifest_path(dest), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=1, sort_keys=True)
 
@@ -295,8 +298,10 @@ def publish_dialog(backend, dialog: str, dest: str, title: str = "Dandelion",
     Returns ``{"slug", "posts", "pruned", "files", "render_ok", "render_detail"}``.
     """
     import os
+    from .datadir import check_writable
     from .nbdev_export import _git_identity, write_files
 
+    check_writable(dest)
     if author is None:
         author = _git_identity()[0] or None
 
@@ -343,8 +348,10 @@ def build_blog(backend, dialogs: list[str], dest: str, title: str = "Dandelion",
     ``{"posts", "files", "render_ok", "render_detail"}``. Post slugs are made
     unique so two dialogs named ``foo/a`` and ``bar/a`` don't collide.
     """
+    from .datadir import check_writable
     from .nbdev_export import _git_identity, write_files
 
+    check_writable(dest)
     if author is None:
         author = _git_identity()[0] or None   # git user.name, or omit the byline
 

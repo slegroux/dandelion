@@ -35,9 +35,11 @@ def test_export_folder_links_resolve_and_extensions(tmp_path):
 
 
 def test_export_folder_stays_inside_dest(tmp_path):
-    dest = tmp_path / "dest"
+    work = tmp_path / "work"                     # tmp_path itself is the test data root
+    work.mkdir()
+    dest = work / "dest"
     export_folder(_msgs(), dest, "../../evil/../name")
-    assert {p.name for p in tmp_path.iterdir()} == {"dest"}
+    assert {p.name for p in work.iterdir()} == {"dest"}
     assert all(dest in p.parents for p in dest.rglob("*"))
 
 
@@ -81,11 +83,13 @@ def test_to_markdown_default_is_inline_and_hook_is_used():
 
 def test_refuses_foreign_file_even_case_insensitively(tmp_path):
     import pytest
-    (tmp_path / "README.md").write_text("ORIGINAL")
+    work = tmp_path / "work"                     # tmp_path itself is the test data root
+    work.mkdir()
+    (work / "README.md").write_text("ORIGINAL")
     with pytest.raises(ValueError, match="already exists"):
-        export_folder(_msgs(), tmp_path, "readme")
-    assert (tmp_path / "README.md").read_text() == "ORIGINAL"
-    assert [p.name for p in tmp_path.iterdir()] == ["README.md"]
+        export_folder(_msgs(), work, "readme")
+    assert (work / "README.md").read_text() == "ORIGINAL"
+    assert [p.name for p in work.iterdir()] == ["README.md"]
 
 
 def test_refuses_foreign_ipynb(tmp_path):
