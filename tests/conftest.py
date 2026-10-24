@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -6,6 +7,10 @@ import pytest
 # Make `import dandelion` / `import server` work for any test file run alone
 # (uv runs the project unpackaged, `package = false`).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# A missing store or lease on a synced folder is looked for again a second later;
+# tests have no sync to wait for (read at import, so set before dandelion loads).
+os.environ.setdefault("DANDELION_STORE_RETRY_S", "0")
+os.environ.setdefault("DANDELION_LEASE_RETRY_S", "0")
 
 
 @pytest.fixture(autouse=True)

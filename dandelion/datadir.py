@@ -49,8 +49,14 @@ REPO_DATA = Path(__file__).resolve().parent.parent / "data"
 _SKIP_SUFFIXES = (".bak", ".tmp", ".restore-tmp", ".tar.gz")   # .tar.gz: older backups
 MARKER = ".dandelion-store"      # says "this folder is a data store"; not part of the data
 LEASE = ".dandelion-lease"       # which machine has the folder open (see acquire_lease)
-_SKIP_NAMES = {".DS_Store", ".serve.pid", MARKER, LEASE, "data-root"}   # data-root: this machine's pointer
+# data-root, machine-id, unsaved-*: this machine's pointer, identity and recovered edits
+_SKIP_NAMES = {".DS_Store", ".serve.pid", MARKER, LEASE, "data-root", "machine-id"}
 _SKIP_DIRS = {".git", "__pycache__", ".ipynb_checkpoints", ".quarto"}
+
+
+def _skipped(name: str) -> bool:
+    """Files that are never backed up, restored or migrated."""
+    return name in _SKIP_NAMES or name.endswith(_SKIP_SUFFIXES) or name.startswith("unsaved-")
 
 
 def config_dir() -> Path:
@@ -566,7 +572,7 @@ def migrate_repo_data(old: Path | None = None) -> list[str]:
     new.mkdir(parents=True, exist_ok=True)
     moved = [f"papers/{m}" for m in paper.migrate_legacy_cache(old / "papers")]
     for src in sorted(old.iterdir()):
-        if src.name == "papers" or src.name in _SKIP_NAMES:
+        if src.name == "papers" or _skipped(src.name):
             continue
         dst = new / src.name
         if dst.exists():
@@ -583,7 +589,7 @@ def leftovers(old: Path | None = None) -> list[str]:
         return []
     out = []
     for p in sorted(old.rglob("*")):
-        if p.is_file() and p.name not in _SKIP_NAMES and not p.name.endswith(_SKIP_SUFFIXES) \
+        if p.is_file() and not _skipped(p.name) \
                 and p.name != "sources.json.migrated":
             out.append(str(p.relative_to(old)))
     return out
@@ -614,6 +620,7 @@ def claim_serving() -> None:
     written: an unrecorded server would leave the folder open to a second one."""
     import atexit
     f, me = _pidfile(), os.getpid()
+    rec = f"{me} {_machine()}"         # the pid means something only on its own machine
     if store_refusal():
         return                         # a refused folder gets no record (and nothing else)
     other = running_server_pid()
@@ -622,7 +629,7 @@ def claim_serving() -> None:
     tmp = f.with_name(f"{f.name}.{me}.tmp")          # unique, and skipped by backups
     try:
         make_dirs(f.parent)
-        tmp.write_text(str(me))
+        tmp.write_text(rec)
         try:
             try:
                 os.link(tmp, f)                  # creates f with its content, or fails
@@ -634,7 +641,7 @@ def claim_serving() -> None:
             except OSError:                      # no hard links here (some FUSE mounts)
                 fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
                 with os.fdopen(fd, "w") as fh:
-                    fh.write(str(me))
+                    fh.write(rec)
         finally:
             tmp.unlink(missing_ok=True)
     except OSError as e:
@@ -644,7 +651,7 @@ def claim_serving() -> None:
 
     def _clear():
         try:
-            if f.read_text().strip() == str(me):
+            if f.read_text().split()[:1] == [str(me)]:
                 f.unlink()
         except OSError:
             pass
@@ -684,10 +691,15 @@ def _looks_like_dandelion(pid: int) -> bool:
 
 
 def running_server_pid(root: Path | None = None) -> int | None:
-    """PID of a live `dandelion serve` using this data root (or `root`), else None."""
+    """PID of a live `dandelion serve` using this data root (or `root`), else None.
+    A record from another machine (the folder is synced) says nothing about this
+    one's processes: that is the lease's job. A bare pid is an older record, from here."""
     try:
-        pid = int(((root / ".serve.pid") if root else _pidfile()).read_text().strip())
+        pid, *machine = ((root / ".serve.pid") if root else _pidfile()).read_text().split()
+        pid = int(pid)
     except (OSError, ValueError):
+        return None
+    if machine and machine[0] != _machine():
         return None
     return pid if pid != os.getpid() and _pid_alive(pid) and _looks_like_dandelion(pid) else None
 
@@ -699,29 +711,87 @@ class AppRunning(RuntimeError):
 # ---- is it open on another machine? ------------------------------------------
 # .serve.pid only sees this machine. A data folder synced between Macs (pCloud)
 # also carries a lease: the serving process rewrites it every LEASE_HEARTBEAT_S,
-# and a server on another machine that finds a fresh one (heartbeat younger than
-# LEASE_STALE_S, which allows for the sync delay) opens the folder read-only. A
-# sync folder has no atomic compare-and-swap, and each machine sees the other's
-# writes only after a sync: two machines can both find the lease free, and a
-# take-over can cross a heartbeat in flight. So this is a warning that makes the
+# and a server on another machine that finds it alive opens the folder read-only.
+# A sync folder has no atomic compare-and-swap (O_EXCL is not exclusive on pCloud),
+# each machine sees the other's writes only after a sync, and a reader can see a
+# file briefly missing while it is replaced. So this is a warning that makes the
 # second machine stop saving, not a lock; the compare-then-replace windows below
-# are kept to one read and one rename.
+# are kept to one read and one rename, and every doubt fails closed (read-only):
+# - machines are told apart by their hardware id, not the hostname (two Macs can
+#   share one, and a router can rename a Mac);
+# - another machine's lease is judged stale only when its heartbeat has not
+#   changed for LEASE_STALE_S on this Mac's own clock (clocks may disagree);
+# - a Mac that slept or stalled past its own lease (no beat for most of
+#   LEASE_STALE_S, by its own clock) stops saving at once: the other Mac may have
+#   taken over meanwhile. It waits LEASE_GRACE_S for the sync before 'Check again'.
 LEASE_HEARTBEAT_S = float(os.environ.get("DANDELION_LEASE_HEARTBEAT_S", "60"))
 LEASE_STALE_S = float(os.environ.get("DANDELION_LEASE_STALE_S", "300"))
+LEASE_GRACE_S = float(os.environ.get("DANDELION_LEASE_GRACE_S", "45"))
+LEASE_UNSEEN_S = 3600          # at start, a lease younger than this by its stamp counts as live
+LEASE_RETRIES = 3              # a missing or unreadable lease is read again this many times,
+LEASE_RETRY_S = float(os.environ.get("DANDELION_LEASE_RETRY_S", "1"))   # this far apart
+_FENCE = 0.8                   # our own hold lapses after _FENCE * LEASE_STALE_S without a beat
+_UNREADABLE = object()         # read_lease(): the file is there but can't be read
 _LEASE_LOCK = threading.RLock()
-# mine: the record this process wrote (it holds the lease); other: the record of
-# the machine that has the folder open (this process is read-only); stop: ends
-# the heartbeat thread. Read-only is decided only at start (acquire_lease), by a
-# heartbeat (_tick), and by 'Check again' / 'Take over' (take_lease).
-_LEASE: dict = {"mine": None, "other": None, "stop": None, "exit_hook": False}
+# mine: the record this process holds (beat_at: when it last wrote it, this
+# Mac's clock); last: the record it held before a lapse; other: the record of
+# the machine that has the folder open (this process is read-only); lapsed:
+# when this Mac's hold lapsed (monotonic); seen: (record key, monotonic first
+# seen) of another machine's lease; notice: a take-over to tell the user about.
+# Read-only is decided only at start (acquire_lease), by a heartbeat (_tick),
+# by a save noticing a lapse, and by 'Check again' / 'Take over' (take_lease).
+_LEASE: dict = {"mine": None, "beat_at": 0.0, "last": None, "other": None, "lapsed": None,
+                "seen": None, "notice": None, "stop": None, "exit_hook": False}
+_ID: dict = {}
 
 
 class StoreInUse(StoreRefused):
-    """Another machine has the data folder open; this one saves nothing."""
+    """Another machine has the data folder open, or this Mac's hold lapsed; this
+    process saves nothing."""
 
 
 def _host() -> str:
     return socket.gethostname()
+
+
+def _run(*cmd: str) -> str:
+    import subprocess
+    try:
+        r = subprocess.run(cmd, check=False, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout if r.returncode == 0 else ""
+
+
+def _local_machine_id() -> str:
+    """A random id kept in config_dir()/machine-id (never backed up or restored,
+    so a restored Mac doesn't pose as the old one)."""
+    import uuid
+    f = config_dir() / "machine-id"
+    with contextlib.suppress(OSError):
+        if v := f.read_text().strip():
+            return v
+    v = str(uuid.uuid4())
+    with contextlib.suppress(OSError):
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(v + "\n")
+    return v
+
+
+def _machine() -> str:
+    """This machine's id: the Mac's IOPlatformUUID, else _local_machine_id()."""
+    if "machine" not in _ID:
+        m = re.search(r'"IOPlatformUUID" = "([^"]+)"',
+                      _run("ioreg", "-rd1", "-c", "IOPlatformExpertDevice"))
+        _ID["machine"] = m.group(1) if m else _local_machine_id()
+    return _ID["machine"]
+
+
+def _machine_name() -> str:
+    """The name people know this Mac by (System Settings > Sharing), else the hostname."""
+    if "name" not in _ID:
+        _ID["name"] = _run("scutil", "--get", "ComputerName").strip() or _host()
+    return _ID["name"]
 
 
 def _lease_file() -> Path:
@@ -732,33 +802,98 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def read_lease() -> dict | None:
-    """The lease record in the data root, or None (none, or unreadable)."""
+def _read_lease_once():
     try:
-        v = json.loads(_lease_file().read_text())
-    except (OSError, ValueError):
+        text = _lease_file().read_text()
+    except FileNotFoundError:
         return None
-    return v if isinstance(v, dict) and isinstance(v.get("host"), str) else None
+    except OSError:
+        return _UNREADABLE
+    try:
+        v = json.loads(text)
+    except ValueError:
+        return _UNREADABLE
+    ok = isinstance(v, dict) and all(isinstance(v.get(k), str) for k in ("machine", "heartbeat"))
+    return v if ok else _UNREADABLE
 
 
-def _lease_age(rec: dict) -> float:
-    """Seconds since the record's last heartbeat; a bad stamp counts as ancient."""
+def read_lease():
+    """The lease record in the data root, None when there is none, or _UNREADABLE.
+    A synced file can look missing or torn for a moment while another machine
+    replaces it, so either is read again a few times (not on the default root,
+    which is never synced, when the lease is simply missing)."""
+    rec = _read_lease_once()
+    for _ in range(LEASE_RETRIES):
+        if isinstance(rec, dict) or (rec is None and _is_default(data_root())):
+            break
+        time.sleep(LEASE_RETRY_S)
+        rec = _read_lease_once()
+    return rec
+
+
+def _stamp_age(rec: dict) -> float:
+    """Seconds since the record's heartbeat by its own stamp (another clock)."""
     try:
         return time.time() - datetime.fromisoformat(rec["heartbeat"]).timestamp()
     except (KeyError, TypeError, ValueError):
         return float("inf")
 
 
-def _held_elsewhere(rec: dict | None) -> bool:
-    """A fresh lease from another host. Our own host's is ours whatever the pid
-    (a crashed run, or a reload worker; .serve.pid already refused a live second
-    server here); an old hostname's lease simply goes stale."""
-    return bool(rec) and rec["host"] != _host() and _lease_age(rec) < LEASE_STALE_S
+def _key(rec: dict) -> tuple:
+    return rec.get("machine"), rec.get("pid"), rec.get("since")
 
 
-def _is_mine(rec: dict | None) -> bool:
-    mine = _LEASE["mine"]
-    return bool(rec and mine) and all(rec.get(k) == mine[k] for k in ("host", "pid", "since"))
+def _is_mine(rec, record: dict | None) -> bool:
+    return isinstance(rec, dict) and bool(record) and _key(rec) == _key(record)
+
+
+def _observed_stale(rec: dict) -> bool:
+    """Whether another machine's lease has not changed for LEASE_STALE_S, as this
+    Mac has watched it (its stamps may come from a clock that is off)."""
+    key, now = (*_key(rec), rec.get("heartbeat")), time.monotonic()
+    seen = _LEASE["seen"]
+    if not seen or seen[0] != key:
+        _LEASE["seen"] = (key, now)
+        return False
+    return now - seen[1] >= LEASE_STALE_S
+
+
+def _name(rec: dict) -> str:
+    return str(rec.get("name") or rec.get("host") or "another machine")
+
+
+def _seen_ago(rec: dict) -> str:
+    age = _stamp_age(rec)
+    return "long ago" if age == float("inf") else f"{max(0, int(age // 60))} min ago"
+
+
+def _reload_parent() -> bool:
+    """This process ran `dandelion serve` with auto-reload; its worker serves."""
+    return os.environ.get("_DANDELION_RELOAD_WORKER") == str(os.getpid())
+
+
+def _judge(rec, start: bool) -> bool:
+    """Whether the lease just read may be taken. When not, records who holds it
+    (this process is then read-only). Caller holds _LEASE_LOCK."""
+    if rec is None:
+        return True
+    if rec is _UNREADABLE:
+        _LEASE["other"] = {"name": "an unknown machine (its lease file can't be read)"}
+        return False
+    if rec["machine"] == _machine():
+        pid = rec.get("pid")
+        if pid == os.getpid() or _is_mine(rec, _LEASE["last"]) \
+                or str(pid) == os.environ.get("_DANDELION_RELOAD_WORKER") \
+                or not isinstance(pid, int) or not _pid_alive(pid):
+            return True                  # ours, our reload parent's, or a run that ended
+        _LEASE["other"] = rec            # another live process here: fail closed
+        return False
+    if _observed_stale(rec) or (start and _stamp_age(rec) >= LEASE_UNSEEN_S):
+        _LEASE["notice"] = (f"Took over the data folder from {_name(rec)} "
+                            f"(last seen {_seen_ago(rec)}).")
+        return True
+    _LEASE["other"] = rec
+    return False
 
 
 def _write_lease(rec: dict) -> None:
@@ -778,38 +913,71 @@ def _when(stamp) -> str:
         return "an unknown time"
 
 
+def _lapsing() -> bool:
+    return bool(_LEASE["mine"]) and time.time() - _LEASE["beat_at"] >= _FENCE * LEASE_STALE_S
+
+
+def _check_lapse() -> bool:
+    """Whether this Mac's hold has lapsed: no beat written for most of
+    LEASE_STALE_S by this Mac's own clock (asleep, stalled, or the folder gone),
+    so another Mac may have taken the lease. Then stop saving and beating."""
+    import sys
+    if not _lapsing():                 # the common case takes no lock (saves call this)
+        return _LEASE["lapsed"] is not None
+    with _LEASE_LOCK:
+        if _lapsing():
+            if _LEASE["stop"]:
+                _LEASE["stop"].set()
+            _LEASE.update(last=_LEASE["mine"], mine=None, stop=None, lapsed=time.monotonic())
+            print(f"[dandelion] WARNING: {lease_banner()}", file=sys.stderr)
+        return _LEASE["lapsed"] is not None
+
+
 def _in_use_refusal() -> str | None:
+    if _check_lapse():
+        return ("This Mac's hold on the data folder lapsed. Dandelion is read-only here; "
+                "nothing is saved until you press Check again.")
     rec = _LEASE["other"]
     if not rec:
         return None
-    return (f"In use by {rec['host']} since {_when(rec.get('since'))}. "
-            "Dandelion is read-only here; nothing is saved.")
+    since = f" since {_when(rec.get('since'))}" if "machine" in rec else ""
+    return f"In use by {_name(rec)}{since}. Dandelion is read-only here; nothing is saved."
 
 
 def lease_banner() -> str | None:
-    """The page banner while another machine has the folder open, else None."""
+    """The page banner while this process is read-only because of the lease."""
+    if _LEASE["lapsed"] is not None:
+        return (f"This Mac's hold on the data folder lapsed (no heartbeat for over "
+                f"{int(_FENCE * LEASE_STALE_S // 60)} min, e.g. after sleep), so another Mac "
+                "may have taken over. Dandelion is read-only here.")
     rec = _LEASE["other"]
     if not rec:
         return None
-    age = _lease_age(rec)
-    seen = "long ago" if age == float("inf") else f"{max(0, int(age // 60))} min ago"
-    return (f"In use by {rec['host']} since {_when(rec.get('since'))} (last seen {seen}). "
-            "Dandelion is read-only here.")
+    if "machine" not in rec:
+        return f"In use by {_name(rec)}. Dandelion is read-only here."
+    return (f"In use by {_name(rec)} since {_when(rec.get('since'))} (last seen "
+            f"{_seen_ago(rec)}). Dandelion is read-only here.")
 
 
 def lease_takeover_warning() -> str:
-    host = (_LEASE["other"] or {}).get("host", "the other machine")
+    rec = _LEASE["other"] or {}
+    host = _name(rec) if "machine" in rec else "the other machine"
     return (f"Take over only if {host} is not running Dandelion on this folder; "
             "unsynced edits there may be lost.")
 
 
+def lease_notice() -> str | None:
+    """'Took over from …', when this process took a lease another machine left."""
+    return _LEASE["notice"]
+
+
 def lease_status() -> str | None:
     """Who has the data folder open, for Settings."""
-    if _LEASE["other"]:
-        return lease_banner()
+    if banner := lease_banner():
+        return banner
     mine = _LEASE["mine"]
     if mine:
-        return (f"Open on this machine ({mine['host']}) since {_when(mine['since'])}; another "
+        return (f"Open on this machine ({mine['name']}) since {_when(mine['since'])}; another "
                 "machine sharing this folder sees it as in use.")
     return None
 
@@ -819,10 +987,10 @@ def _take_lease() -> None:
     import atexit
     from . import __version__
     now = _now()
-    rec = {"host": _host(), "pid": os.getpid(), "since": now, "heartbeat": now,
-           "version": __version__}
+    rec = {"machine": _machine(), "name": _machine_name(), "host": _host(), "pid": os.getpid(),
+           "since": now, "heartbeat": now, "version": __version__}
     _write_lease(rec)
-    _LEASE.update(mine=rec, other=None)
+    _LEASE.update(mine=rec, beat_at=time.time(), last=None, other=None, lapsed=None, seen=None)
     if _LEASE["stop"] is None:
         stop = _LEASE["stop"] = threading.Event()
         threading.Thread(target=_heartbeat, args=(stop,), name="dandelion-lease",
@@ -833,18 +1001,17 @@ def _take_lease() -> None:
 
 
 def acquire_lease() -> bool:
-    """At serve start: take the data folder's lease, or, when another machine holds
-    a fresh one, open read-only (every check_writable raises StoreInUse). A refused
-    root gets no lease. Returns whether this process may save."""
+    """At serve start: take the data folder's lease, or, when it is held (another
+    machine's live lease, another live process here, or a lease that can't be
+    read), open read-only (every check_writable raises StoreInUse). A refused
+    root gets no lease. Idempotent. Returns whether this process may save."""
     import sys
     with _LEASE_LOCK:
-        if _LEASE["mine"] or _LEASE["other"]:
-            return not _LEASE["other"]
+        if _LEASE["mine"] or _LEASE["other"] or _LEASE["lapsed"] is not None:
+            return not _in_use_refusal()
         if _root_refusal():
             return False
-        rec = read_lease()
-        if _held_elsewhere(rec):
-            _LEASE["other"] = rec
+        if not _judge(read_lease(), start=True):
             print(f"[dandelion] WARNING: {lease_banner()}", file=sys.stderr)
             return False
         try:
@@ -853,63 +1020,84 @@ def acquire_lease() -> bool:
             print(f"[dandelion] WARNING: could not write {_lease_file()} ({e.strerror or e}); "
                   "another machine sharing this folder will not see it is open here.",
                   file=sys.stderr)
+        if _LEASE["notice"]:
+            print(f"[dandelion] {_LEASE['notice']}", file=sys.stderr)
         return True
 
 
 def take_lease(force: bool = False, before=None) -> tuple[bool, str]:
     """Leave read-only. 'Check again' (force False) re-reads the lease and takes it
-    only if it was released, went stale or is this machine's; 'Take over' (force
-    True) takes it anyway. `before` runs just before, still read-only: the app
-    reloads its dialogs from disk there, since the ones in memory may predate the
-    other machine's saves. Returns (ok, message)."""
+    only if it was released, is ours, or has not changed for LEASE_STALE_S while
+    this Mac watched; after a lapse it first waits LEASE_GRACE_S for the sync.
+    'Take over' (force True) takes it anyway. `before` runs just before, still
+    read-only: the app reloads its dialogs from disk there, since the ones in
+    memory may predate the other machine's saves. Returns (ok, message)."""
     with _LEASE_LOCK:
         if _root_refusal():
             return False, "The data folder is refused; see the banner."
-        if not _LEASE["other"]:
+        if not (_LEASE["other"] or _LEASE["lapsed"] is not None):
             return True, "This machine already has the data folder open."
-        rec = read_lease()
-        if not force and _held_elsewhere(rec):
-            _LEASE["other"] = rec                    # refresh "last seen"
-            return False, f"Still in use by {rec['host']}."
+        if not force and _LEASE["lapsed"] is not None:
+            wait = LEASE_GRACE_S - (time.monotonic() - _LEASE["lapsed"])
+            if wait > 0:
+                return False, (f"Waiting for the other Mac's changes to sync: press Check again "
+                               f"in {int(wait) + 1} s.")
+        _LEASE["notice"] = None
+        if not force and not _judge(read_lease(), start=False):
+            _LEASE["lapsed"] = None            # the holder is known now: show who it is
+            return False, f"Still in use by {_name(_LEASE['other'])}."
         if before:
             before()
         try:
             _take_lease()
         except OSError as e:
             return False, f"Could not write {_lease_file()}: {e.strerror or e}"
-        return True, "This machine has the data folder now; dialogs reloaded from disk."
+        return True, " ".join(filter(None, (
+            _LEASE["notice"], "This machine has the data folder now; dialogs reloaded from disk.")))
 
 
 def _tick(stop: threading.Event | None = None) -> bool:
-    """One heartbeat: refresh our lease, unless it is no longer ours. Another host's
-    record there means it took over: go read-only at once and never write ours
-    back over it. This host's other process (a reload worker) just beats instead.
-    Returns whether to keep beating."""
+    """One heartbeat: refresh our lease, unless the hold lapsed or the lease is no
+    longer ours. Someone else's record there means they took over: go read-only
+    at once and never write ours back over it (only the reload parent, whose
+    worker took the lease, steps back quietly). An unreadable lease skips the
+    beat. Returns whether to keep beating."""
     import sys
     with _LEASE_LOCK:
         mine = _LEASE["mine"]
-        if not mine or (stop is not None and stop is not _LEASE["stop"]):
+        if not mine or (stop is not None and stop is not _LEASE["stop"]) or _check_lapse():
             return False
         rec = read_lease()
-        if rec is not None and not _is_mine(rec):
+        if rec is _UNREADABLE:
+            return True
+        if rec is not None and not _is_mine(rec, mine):
             if _LEASE["stop"]:
                 _LEASE["stop"].set()
             _LEASE.update(mine=None, stop=None)
-            if rec["host"] != _host():
+            if not (rec["machine"] == _machine() and _reload_parent()):
                 _LEASE["other"] = rec
-                print(f"[dandelion] WARNING: {rec['host']} took over the data folder. "
+                _observed_stale(rec)
+                print(f"[dandelion] WARNING: {_name(rec)} took over the data folder. "
                       f"{lease_banner()}", file=sys.stderr)
             return False
         beat = {**mine, "heartbeat": _now()}
-        with contextlib.suppress(OSError):             # a vanished mount: try next time
+        with contextlib.suppress(OSError):             # a vanished mount: the lapse catches it
             _write_lease(beat)
-            _LEASE["mine"] = beat
+            _LEASE.update(mine=beat, beat_at=time.time())
         return True
 
 
 def _heartbeat(stop: threading.Event) -> None:
-    while not stop.wait(LEASE_HEARTBEAT_S) and _tick(stop):
-        pass
+    import sys
+    warned = False
+    while not stop.wait(LEASE_HEARTBEAT_S):
+        try:
+            if not _tick(stop):
+                return
+        except Exception as e:  # noqa: BLE001 — never let the beat die (the lapse is the backstop)
+            if not warned:
+                warned = True
+                print(f"[dandelion] WARNING: lease heartbeat failed: {e!r}", file=sys.stderr)
 
 
 def _release_lease() -> None:
@@ -917,7 +1105,7 @@ def _release_lease() -> None:
     with _LEASE_LOCK:
         if _LEASE["stop"]:
             _LEASE["stop"].set()
-        if _is_mine(read_lease()):
+        if _is_mine(_read_lease_once(), _LEASE["mine"]):
             with contextlib.suppress(OSError):
                 _lease_file().unlink()
         _LEASE.update(mine=None, stop=None)
@@ -928,7 +1116,15 @@ def _reset_lease() -> None:
     with _LEASE_LOCK:
         if _LEASE["stop"]:
             _LEASE["stop"].set()
-        _LEASE.update(mine=None, other=None, stop=None)
+        _LEASE.update(mine=None, last=None, other=None, lapsed=None, seen=None, notice=None,
+                      stop=None, beat_at=0.0)
+
+
+def _maybe_held(rec) -> bool:
+    """For one-shot commands, which can't watch the lease: another machine's lease
+    stamped within LEASE_UNSEEN_S, or one that can't be read."""
+    return rec is _UNREADABLE or (isinstance(rec, dict) and rec["machine"] != _machine()
+                                  and _stamp_age(rec) < LEASE_UNSEEN_S)
 
 
 # ---- backup / restore --------------------------------------------------------
@@ -950,7 +1146,7 @@ def _walk(base: Path, prefix: str, special: list[Path],
             continue                             # the store's own snapshots
         if ".corrupt-" in p.name:
             continue                             # damaged stores set aside
-        if p.name in _SKIP_NAMES or p.name.endswith(_SKIP_SUFFIXES):
+        if _skipped(p.name):
             continue
         if p.name == "secrets.json" and not with_secrets:
             continue                             # stray key files (e.g. old data/) too
@@ -1045,11 +1241,11 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
         raise AppRunning(f"the app is running (pid {pid}); stop it first (just stop). "
                          f"If it isn't, delete {_pidfile()}")
     rec = read_lease()
-    if _held_elsewhere(rec):
-        raise AppRunning(f"Dandelion is open on {rec['host']} with this data folder (last seen "
-                         f"{int(_lease_age(rec) // 60)} min ago); stop it there first. If it "
-                         f"isn't running, wait {int(LEASE_STALE_S // 60)} minutes or delete "
-                         f"{_lease_file()}")
+    if _maybe_held(rec):
+        who = (f"{_name(rec)} (last seen {_seen_ago(rec)})" if isinstance(rec, dict)
+               else "a machine whose lease file can't be read")
+        raise AppRunning(f"Dandelion is open on {who} with this data folder; stop it there "
+                         f"first. If it isn't running, delete {_lease_file()}")
     check_writable()
     secret = secrets_path(write=True)
     restored, skipped, index = [], [], {}
@@ -1067,6 +1263,9 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
                     index = {}
                 continue
             dst = _target_for(m.name)
+            if _skipped(PurePosixPath(m.name).name):
+                skipped.append(f"{m.name} (belongs to the machine that made the backup)")
+                continue
             if dst is None:
                 skipped.append(f"{m.name} (unsafe path)")
                 continue

@@ -501,8 +501,7 @@ def _ensure_target() -> None:
         return
     STATE["_target_ready"] = True
     datadir.freeze_root()                    # the data folder is fixed until restart
-    if os.environ.get("_DANDELION_RELOAD_WORKER"):
-        datadir.acquire_lease()              # auto-reload serves from this worker process
+    datadir.acquire_lease()                  # done already by serve, except in a reload worker
     use_target(_initial_target())
 
 
@@ -2483,7 +2482,7 @@ PAPER_JS = """
 
 
 def _lease_banner():
-    """Another machine has the data folder open: who, and the two ways out."""
+    """Read-only because of the lease: why, and the two ways out."""
     text = datadir.lease_banner()
     if not text:
         return None
@@ -2498,14 +2497,23 @@ def _lease_banner():
         cls="banner", id="lease-banner")
 
 
+def _ro_banner(oob: bool = False):
+    """Why nothing is saved (a refused folder, the lease), or an empty slot. It
+    polls /lease/status so an idle page notices a switch to read-only, and
+    _ReadOnlyBanner adds it out-of-band to htmx partials, which never re-render it."""
+    lease = _lease_banner()
+    root = datadir.store_refusal() if not lease else datadir._root_refusal()
+    return Div(*([Div("⚠ ", root, cls="banner")] if root else []), *([lease] if lease else []),
+               id="ro-banner", hx_get="/lease/status", hx_trigger="every 30s",
+               hx_swap="outerHTML", **({"hx_swap_oob": "true"} if oob else {}))
+
+
 def Page():
-    banner =(Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
+    banner = (Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
                   cls="banner") if STATE["warning"] else None)
     from . import client as _client              # a recovered (corrupt) dialog store
-    lease = _lease_banner()                      # another machine has the folder open
-    refused = None if lease else datadir.store_refusal()
-    store_notes = [*([lease] if lease else []), *(Div("⚠ ", n, cls="banner") for n in
-                   [*([refused] if refused else []), *_client.STORE_NOTICES])]
+    store_notes = [_ro_banner(), *(Div("⚠ ", n, cls="banner") for n in
+                   [*filter(None, [datadir.lease_notice()]), *_client.STORE_NOTICES])]
     return Html(
         # *app.hdrs carries htmx (+ fasthtml.js): without it the per-cell
         # hx-post buttons render but do nothing, since we return a full Html
@@ -2834,6 +2842,47 @@ class _SessionScope:
             _CUR_SID.reset(token)
 
 
+class _ReadOnlyBanner:
+    """Pure-ASGI middleware: htmx swaps only part of the page, so a switch to
+    read-only mid-session (another Mac took over, this Mac's hold lapsed, the
+    folder went away) would never show and edits would look saved. Every htmx
+    HTML response carries the banner out-of-band while anything is refused."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") == "/lease/status" \
+                or not any(k == b"hx-request" for k, _ in scope.get("headers", [])):
+            await self.app(scope, receive, send)
+            return
+        held, chunks = [], []
+
+        async def _send(message):
+            if message["type"] == "http.response.start":
+                ctype = dict(message.get("headers", [])).get(b"content-type", b"")
+                if ctype.startswith(b"text/html"):
+                    held.append(message)             # hold it until the body is known
+                    return
+            elif message["type"] == "http.response.body" and held:
+                chunks.append(message.get("body", b""))
+                if message.get("more_body"):
+                    return
+                body = b"".join(chunks)
+                if b'id="ro-banner"' not in body and datadir.store_refusal():
+                    body += to_xml(_ro_banner(oob=True)).encode()
+                headers = [(k, v) for k, v in held[0].get("headers", [])
+                           if k.lower() != b"content-length"]
+                await send({**held[0], "headers": [*headers, (b"content-length",
+                                                               str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+            await send(message)
+
+        await self.app(scope, receive, _send)
+
+
+app.add_middleware(_ReadOnlyBanner)
 app.add_middleware(_LocalGuard)
 app.add_middleware(_SessionScope)
 
@@ -2910,16 +2959,30 @@ def settings_data_folder(action: str = "use", path: str = "", confirm: str = "")
 
 def _leave_read_only(force: bool):
     """'Check again' / 'Take over': under the save lock, so no save slips in
-    between; the dialogs are reloaded from disk before the first save."""
+    between; the dialogs are reloaded from disk before the first save, and the
+    ones dropped from memory are kept in a local file."""
+    from starlette.responses import RedirectResponse
     from . import client as _client
+    if STATE.get("pending_stream"):
+        set_cur("flash", "An AI answer is still coming in; press it again once it has finished "
+                         "(reloading the dialogs now would lose it).")
+        return RedirectResponse("/", status_code=303)
+    backend, kept = STATE["backend"], []
+    before = (lambda: kept.append(backend.reload())) if hasattr(backend, "reload") else None
     with _client._SAVE_LOCK:
         try:
-            _, msg = datadir.take_lease(force=force,
-                                        before=getattr(STATE["backend"], "reload", None))
+            _, msg = datadir.take_lease(force=force, before=before)
         except (_client.StoreUnreadable, OSError) as e:      # still read-only
-            msg = f"Could not reload the dialogs: {e}"
+            msg = f"Still read-only: could not reload the dialogs ({e})."
+    if kept and kept[0]:
+        msg += f" What this Mac had in memory is kept in {kept[0]} (on this Mac only)."
     set_cur("flash", msg)
-    return Page()
+    return RedirectResponse("/", status_code=303)
+
+
+@rt("/lease/status", methods=["get"])
+def lease_status():
+    return _ro_banner()
 
 
 @rt("/lease/check", methods=["post"])
@@ -2930,8 +2993,9 @@ def lease_check():
 @rt("/lease/take-over", methods=["post"])
 def lease_take_over(confirm: str = ""):
     if not confirm:
+        from starlette.responses import RedirectResponse
         set_cur("flash", datadir.lease_takeover_warning() + " Tick the box to confirm.")
-        return Page()
+        return RedirectResponse("/", status_code=303)
     return _leave_read_only(force=True)
 
 

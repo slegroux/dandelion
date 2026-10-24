@@ -76,12 +76,12 @@ def test_refusal_writes_nothing_and_prints_no_banner(tmp_path, monkeypatch, caps
 def test_claim_records_our_pid_over_a_stale_file(tmp_path, monkeypatch):
     _record(tmp_path, monkeypatch, 4242, "python -m dandelion.cli serve", alive=False)
     datadir.claim_serving()
-    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert (tmp_path / ".serve.pid").read_text().split()[0] == str(os.getpid())
 
 
 def test_claim_creates_the_file_when_none_exists(tmp_path):
     datadir.claim_serving()
-    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert (tmp_path / ".serve.pid").read_text().split()[0] == str(os.getpid())
 
 
 def test_claim_refuses_when_the_record_cannot_be_written(tmp_path, monkeypatch, _serve):
@@ -165,8 +165,8 @@ def test_claim_never_leaves_the_file_without_content(tmp_path, monkeypatch):
         real_link(src, dst)
     monkeypatch.setattr(os, "link", link)
     datadir.claim_serving()
-    assert seen == [str(os.getpid())]
-    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert [x.split()[0] for x in seen] == [str(os.getpid())]
+    assert (tmp_path / ".serve.pid").read_text().split()[0] == str(os.getpid())
     assert not list(tmp_path.glob(".serve.pid.*"))
 
 
@@ -189,5 +189,5 @@ def test_claim_falls_back_when_links_are_unsupported(tmp_path, monkeypatch):
         raise PermissionError(1, "not supported")
     monkeypatch.setattr(os, "link", nolink)
     datadir.claim_serving()
-    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert (tmp_path / ".serve.pid").read_text().split()[0] == str(os.getpid())
     assert not list(tmp_path.glob(".serve.pid.*"))
