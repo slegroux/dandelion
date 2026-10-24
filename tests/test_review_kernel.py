@@ -216,3 +216,22 @@ def test_run_prompt_without_key_is_offline_stub(monkeypatch):
     monkeypatch.setattr("dandelion.secrets_store.key_for_model", lambda m: None)
     out = kernel_server.run_prompt("d", "hello", "claude")
     assert "no API key" in out
+
+
+# ---- cell source: what a cell defines can be read back -----------------------
+def test_cell_source_survives_for_inspect():
+    """Each run's code is kept in linecache under a name of its own, so inspect finds
+    a class defined in an earlier cell (Kiln compiles agents from their source)."""
+    dialog = "test-cell-source"
+    kernel_server.run_code(dialog, "class Dot:\n    def step(self, dt):\n        return dt * 2\n")
+    kernel_server.run_code(dialog, "x = 1")            # a later cell must not replace it
+    out, _ = kernel_server.run_code(
+        dialog,
+        "import inspect, linecache\nlinecache.checkcache()\nprint(inspect.getsource(Dot.step))")
+    assert "return dt * 2" in out
+    kernel_server.run_code(dialog, "s = 'a\u2028b'\ndef g():\n    return 3\n")   # a line separator in a string
+    out, _ = kernel_server.run_code(dialog, "print(inspect.getsource(g))")
+    assert "return 3" in out
+    out, _ = kernel_server.run_code(dialog, "1 / 0")
+    assert "ZeroDivisionError" in out
+    assert kernel_server.KERNELS.pop(dialog)

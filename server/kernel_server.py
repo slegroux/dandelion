@@ -33,7 +33,9 @@ import ast
 import ctypes
 import hmac
 import io
+import itertools
 import json
+import linecache
 import os
 import re
 import contextlib
@@ -252,6 +254,23 @@ def _split_last_expr(code: str, tree: ast.Module):
     return None
 
 
+_CELL_RUNS = itertools.count(1)
+
+
+def _cell_filename(code: str) -> str:
+    """A filename of its own for one run's code, with the text kept in linecache, the
+    way IPython does. `inspect.getsource` then finds the functions and methods a cell
+    defined (libraries that compile a function from its source, such as Kiln's agents,
+    need it), and a traceback the user prints shows the cell's lines. mtime None keeps
+    `linecache.checkcache` from evicting it: there is no file to compare against. Lines
+    are split as the compiler counts them (\n, \r\n, \r), not by str.splitlines,
+    which also breaks on U+2028 and form feeds inside strings."""
+    name = f"<dialog-cell-{next(_CELL_RUNS)}>"
+    lines = io.StringIO(code, newline=None).readlines()
+    linecache.cache[name] = (len(code), None, lines, name)
+    return name
+
+
 def _execute(dialog: str, code: str, buf: io.StringIO, rich_out: list) -> str | None:
     """Core execution shared by the sync (`run_code`) and async (`exec_start`)
     paths. Parses `code`, execs it into the dialog namespace, evals a trailing
@@ -270,6 +289,7 @@ def _execute(dialog: str, code: str, buf: io.StringIO, rich_out: list) -> str | 
         buf.write(f"SyntaxError: {e}")
         return f"SyntaxError: {e}"
     last_expr = _split_last_expr(code, tree)
+    filename = _cell_filename(code)
     ns = _ns(dialog)
     err = None
     try:
@@ -279,9 +299,9 @@ def _execute(dialog: str, code: str, buf: io.StringIO, rich_out: list) -> str | 
             # still warns "FigureCanvasAgg is non-interactive…" to stderr — pure
             # noise here, since _capture_figs() renders the figure inline anyway.
             warnings.filterwarnings("ignore", message="FigureCanvasAgg is non-interactive")
-            exec(compile(tree, "<dialog>", "exec"), ns)
+            exec(compile(tree, filename, "exec"), ns)
             if last_expr is not None:
-                val = eval(compile(last_expr, "<dialog>", "eval"), ns)
+                val = eval(compile(last_expr, filename, "eval"), ns)
                 if val is not None:
                     r = _rich_repr(val)
                     if r:
