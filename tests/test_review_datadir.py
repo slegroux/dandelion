@@ -24,6 +24,8 @@ def _seed(root):
 
 
 def _env(monkeypatch, root):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / datadir.MARKER).write_text("")
     monkeypatch.setenv("DANDELION_DATA", str(root))
     monkeypatch.setenv("DANDELION_PAPERS", str(root / "papers"))
     monkeypatch.setenv("DANDELION_SECRETS", str(root / "secrets.json"))

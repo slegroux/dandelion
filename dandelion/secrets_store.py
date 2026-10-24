@@ -34,10 +34,10 @@ def secrets_path(write: bool = False) -> Path:
     env = os.environ.get("DANDELION_SECRETS")
     if env:
         return Path(env).expanduser()
-    p = Path.home() / ".config" / "dandelion" / "secrets.json"
+    from .datadir import config_dir, legacy_file
+    p = config_dir() / "secrets.json"
     if write or p.exists():
         return p
-    from .datadir import legacy_file
     return legacy_file("secrets.json") or p
 
 

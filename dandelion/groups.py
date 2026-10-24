@@ -16,7 +16,7 @@ import os
 import threading
 from pathlib import Path
 
-from .datadir import data_root
+from .datadir import StoreRefused, check_writable, data_root
 
 
 # One lock for read-modify-write: the sidebar can send several updates at once.
@@ -48,6 +48,10 @@ def load() -> dict:
 def save(layout: dict) -> None:
     with _LOCK:
         p = _path()
+        try:
+            check_writable(p)
+        except StoreRefused:
+            return                                   # unmarked folder: the banner says so
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(layout, indent=2))

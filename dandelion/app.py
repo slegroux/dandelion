@@ -32,7 +32,7 @@ from .client import (connect, build_context, collect_images, count_image_outputs
 from .claude_cli import (stream as stream_claude, call as call_claude,
                          cost_for, CLI_MODELS, AI_MODES, DEFAULT_MODE)
 from .codex_cli import stream as stream_codex, CLI_MODELS as CODEX_CLI_MODELS
-from . import secrets_store, export, libraries, nbdev_export, scaffold
+from . import secrets_store, export, libraries, nbdev_export, scaffold, datadir
 from . import claude_cli, codex_cli
 from . import groups as groupslib
 from . import paper as paperlib
@@ -2085,7 +2085,38 @@ def _card_state(st, via, signed_in):
     return signed_in
 
 
-def SettingsPage(saved=False):
+def _data_folder_card(msg=None):
+    """Settings row: where the data live, where that comes from, and how to change it."""
+    root, src = datadir.data_root(), datadir.data_root_source()
+    env = src == "env"
+    why = {"env": "set by the DANDELION_DATA environment variable, which overrides the setting below",
+           "pointer": f"chosen here (saved in {datadir.config_dir() / 'data-root'})",
+           "default": "the default"}[src]
+    return Div(
+        Div("Data folder", Span(" · dialogs, papers, blog; keys stay in "
+                                f"{datadir.config_dir()}", cls="muted"), cls="settings-h"),
+        Div(f"Using {root}", Span(f"  ·  {why}", cls="muted"), cls="prov-card"),
+        (Div("⚠ ", datadir.store_refusal(), cls="banner") if datadir.store_refusal() else ""),
+        (Div(msg[1], cls="saved" if msg[0] else "banner") if msg else ""),
+        Form(
+            Input(type="text", name="path", placeholder="/absolute/path/to/folder",
+                  value=str(datadir.read_pointer() or ""), disabled=env, cls="keyinput",
+                  aria_label="Data folder"),
+            Div(Input(type="checkbox", name="confirm", id="df_confirm", disabled=env),
+                Label(" This folder already has other files; mark it as a Dandelion data "
+                      "folder anyway", fr="df_confirm"), cls="muted small"),
+            Div("Applies after you restart Dandelion. It never moves or copies your existing "
+                "dialogs: to bring them along, run dandelion backup first and dandelion "
+                "restore after the restart.", cls="muted small"),
+            Button("Use this folder", cls="save-btn", type="submit", name="action",
+                   value="use", disabled=env),
+            Button("Back to the default", cls="save-btn", type="submit", name="action",
+                   value="clear", disabled=env or src != "pointer"),
+            method="post", action="/settings/data-folder",
+        ))
+
+
+def SettingsPage(saved=False, data_msg=None):
     models = list_models()
     label_of = {m["id"]: m["label"] for m in models}
 
@@ -2165,6 +2196,7 @@ def SettingsPage(saved=False):
                 Div("Subscription", Span(" · sign in, no key, uses your plan", cls="muted"),
                     cls="settings-h"),
                 *plan_cards,
+                _data_folder_card(data_msg),
                 Form(
                     Div("API keys", Span(" · billed per token", cls="muted"), cls="settings-h"),
                     Div("Only needed for the models listed on each card. Keys are stored "
@@ -2435,7 +2467,9 @@ def Page():
     banner = (Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
                   cls="banner") if STATE["warning"] else None)
     from . import client as _client              # a recovered (corrupt) dialog store
-    store_notes = [Div("⚠ ", n, cls="banner") for n in _client.STORE_NOTICES]
+    store_notes = [Div("⚠ ", n, cls="banner") for n in
+                   [*([datadir.store_refusal()] if datadir.store_refusal() else []),
+                    *_client.STORE_NOTICES]]
     return Html(
         # *app.hdrs carries htmx (+ fasthtml.js): without it the per-cell
         # hx-post buttons render but do nothing, since we return a full Html
@@ -2827,6 +2861,15 @@ def settings_post(ANTHROPIC_API_KEY: str = "", ZHIPU_API_KEY: str = "",
         STATE["model"] = default_model
     use_target(STATE["target_name"])         # reconnect so new key takes effect
     return SettingsPage(saved=True)
+
+
+@rt("/settings/data-folder", methods=["post"])
+def settings_data_folder(action: str = "use", path: str = "", confirm: str = ""):
+    if datadir.data_root_source() == "env":
+        return SettingsPage(data_msg=(False, "DANDELION_DATA is set and overrides this."))
+    if action == "clear":
+        return SettingsPage(data_msg=datadir.clear_pointer())
+    return SettingsPage(data_msg=datadir.use_folder(path, confirm=bool(confirm)))
 
 
 @rt("/libraries", methods=["get"])
@@ -4050,6 +4093,7 @@ def _save_upload(pdf) -> tuple[str, str] | None:
         return None
     import hashlib
     updir = paperlib._cache_dir() / "uploads"
+    paperlib.check_writable(updir)
     updir.mkdir(parents=True, exist_ok=True)
     dst = updir / (hashlib.sha1(data).hexdigest()[:16] + ".pdf")
     if not dst.exists():                         # identical content already saved →
@@ -4104,6 +4148,7 @@ def _record_paper_source(dialog: str, p: dict) -> None:
         return
     try:
         f = _paper_sources_file()
+        paperlib.check_writable(f)
         f.parent.mkdir(parents=True, exist_ok=True)
         srcs = _load_paper_sources()
         srcs[dialog] = {"source": src, "name": p.get("name", "")}

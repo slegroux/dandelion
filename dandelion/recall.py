@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 
 from .client import build_context
+from .datadir import check_writable
 
 
 # ---- prompt + parse ---------------------------------------------------------
@@ -207,6 +208,7 @@ def save_schedule(schedule: dict, path: str | Path | None = None) -> None:
     raises (same posture as the dialogs store's own save)."""
     p = Path(path) if path else default_schedule_path()
     try:
+        check_writable(p)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(schedule, indent=2))
     except OSError:

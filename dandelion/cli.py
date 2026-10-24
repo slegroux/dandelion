@@ -185,7 +185,7 @@ def cmd_restore(args):
         return 2
     try:
         restored, skipped = datadir.restore(rest[0], force=force)
-    except datadir.AppRunning as e:
+    except (datadir.AppRunning, datadir.StoreRefused) as e:
         print(f"restore refused: {e}", file=sys.stderr)
         return 1
     print(f"Restored {len(restored)} files into {datadir.data_root()}")
@@ -220,7 +220,8 @@ def cmd_serve(_):
             "Use an SSH tunnel for remote access (see the comment in cli.py).")
     if not _move_out_of_repo():
         raise SystemExit("not starting: stop the older server first (see above)")
-    from .datadir import mark_serving
+    from .datadir import claim_default_root, mark_serving
+    claim_default_root()
     mark_serving()
     if reload:
         uvicorn.run("dandelion.app:app", host=host, port=port,

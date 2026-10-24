@@ -34,10 +34,10 @@ def tools_path(write: bool = False) -> Path:
     env = os.environ.get("DANDELION_TOOLS")
     if env:
         return Path(env).expanduser()
-    p = Path.home() / ".config" / "dandelion" / "tools.json"
+    from .datadir import config_dir, legacy_file
+    p = config_dir() / "tools.json"
     if write or p.exists():
         return p
-    from .datadir import legacy_file
     return legacy_file("tools.json") or p
 
 

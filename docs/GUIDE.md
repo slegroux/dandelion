@@ -524,6 +524,16 @@ just stop && just restore ~/pCloud/dandelion-backup-….tar.gz   # on the new in
 Restore keeps any file that already exists unless you pass `--force`, and it
 refuses to run while the app is up (stop it with `just stop` first).
 
+**Choosing the data folder.** Open Settings, **Data folder**, type an absolute path
+and press **Use this folder**; it applies after you restart. The choice is saved in
+`~/.config/dandelion/data-root`, and `DANDELION_DATA`, when set, overrides it.
+Nothing is moved or copied: to bring your dialogs along, run `just backup` before
+and `just restore` after the restart. API keys and the Ask AI tool policy always
+stay in `~/.config/dandelion`, never in the data folder. A folder other than the
+default needs a `.dandelion-store` marker, which **Use this folder** writes; without
+it (an unmounted drive, say pCloud not running) Dandelion refuses the folder, writes
+nothing there, and shows a banner until you pick another folder or use this one.
+
 The notebook store also protects itself. Every save keeps the previous version
 as `dialogs-<target>.json.bak`, and while you work a timestamped copy goes to
 `backups/` every 15 minutes, newest 20 kept (`DANDELION_SNAPSHOT_MINUTES`,

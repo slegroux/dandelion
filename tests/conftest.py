@@ -17,6 +17,7 @@ def _isolated_user_data(tmp_path, monkeypatch):
     # (e.g. the one-time ~/.config migration) must never reach the real home.
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
+    (tmp_path / ".dandelion-store").write_text("")       # a non-default root needs its marker
     monkeypatch.setenv("DANDELION_PAPERS", str(tmp_path / "papers"))
     monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "secrets.json"))
     monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "tools.json"))

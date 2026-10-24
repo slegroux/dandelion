@@ -2,7 +2,9 @@
 
 All user data is local to the machine and never part of the git repo:
 
-    ~/.config/dandelion/          (override with DANDELION_DATA)
+    ~/.config/dandelion/          (override with DANDELION_DATA, or the Settings
+                                   "Data folder", which saves a pointer file
+                                   ~/.config/dandelion/data-root)
         dialogs-<target>.json            notebooks: cells, outputs, sidebar list
         dialogs-<target>.local.json      dialogs marked "keep local only"
         dialogs-<target>.private         names of those dialogs
@@ -11,6 +13,11 @@ All user data is local to the machine and never part of the git repo:
         blog/                            the Quarto blog project
         papers/                          reading library (DANDELION_PAPERS)
         tools.json, secrets.json         Ask-AI tool policy, API keys
+                                         (these two always stay in ~/.config/dandelion)
+
+A data folder other than ~/.config/dandelion must hold a `.dandelion-store` marker,
+or it is refused and nothing is written there (an unmounted drive looks like an
+empty folder). Only "Use this folder" in Settings creates the marker.
 
 `backup()` packs that into one .tar.gz and `restore()` unpacks it on a new
 install (`dandelion backup` / `dandelion restore`). API keys are left out of a
@@ -33,13 +40,119 @@ REPO_DATA = Path(__file__).resolve().parent.parent / "data"
 
 # rolling save-backups and half-written temp files are not worth carrying over
 _SKIP_SUFFIXES = (".bak", ".tmp", ".restore-tmp", ".tar.gz")   # .tar.gz: older backups
-_SKIP_NAMES = {".DS_Store", ".serve.pid"}
+MARKER = ".dandelion-store"      # says "this folder is a data store"; not part of the data
+_SKIP_NAMES = {".DS_Store", ".serve.pid", MARKER}
 _SKIP_DIRS = {".git", "__pycache__", ".ipynb_checkpoints", ".quarto"}
+
+
+def config_dir() -> Path:
+    """Where keys, tool policy and the data-folder pointer live, whatever the data root."""
+    return Path.home() / ".config" / "dandelion"
+
+
+def _pointer_file() -> Path:
+    return config_dir() / "data-root"
+
+
+def read_pointer() -> Path | None:
+    """The folder the pointer file names (one absolute path), else None."""
+    try:
+        text = _pointer_file().read_text().strip()
+    except OSError:
+        return None
+    p = Path(text).expanduser() if text else None
+    return p if p and p.is_absolute() else None
+
+
+def data_root_source() -> str:
+    """Why data_root() is what it is: 'env' | 'pointer' | 'default'."""
+    if os.environ.get("DANDELION_DATA"):
+        return "env"
+    return "pointer" if read_pointer() else "default"
 
 
 def data_root() -> Path:
     base = os.environ.get("DANDELION_DATA")
-    return Path(base).expanduser() if base else Path.home() / ".config" / "dandelion"
+    if base:
+        return Path(base).expanduser()
+    return read_pointer() or config_dir()
+
+
+class StoreRefused(OSError):
+    """The data folder has no marker; nothing may be written to it. An OSError, so
+    the best-effort savers that already swallow disk errors swallow this too."""
+
+
+def store_refusal() -> str | None:
+    """Why the data root is refused (a message for the UI), or None when it may be
+    used: the default root always may; any other needs its marker file."""
+    root = data_root()
+    if _same(root, config_dir()) or (root / MARKER).is_file():
+        return None
+    return (f"{root} has no {MARKER} marker; the folder may be an unmounted drive "
+            "(e.g. pCloud not running). Nothing is saved there. Open Settings to pick "
+            "another folder or use this one.")
+
+
+def check_writable(path: Path | str | None = None) -> None:
+    """Call before writing under the data root. Raises StoreRefused while the root
+    is refused; `path` limits that to paths inside the root (papers may live elsewhere)."""
+    msg = store_refusal()
+    if msg and (path is None or _same(Path(path), data_root())
+                or data_root() in Path(path).parents):
+        raise StoreRefused(msg)
+
+
+def claim_default_root() -> None:
+    """Write the marker into the default root so it is never refused. Silent and
+    best-effort; called at serve start. Other roots get theirs only from use_folder."""
+    root = data_root()
+    if not _same(root, config_dir()) or (root / MARKER).is_file():
+        return
+    with contextlib.suppress(OSError):
+        root.mkdir(parents=True, exist_ok=True)
+        (root / MARKER).write_text("")
+
+
+def use_folder(path: str, confirm: bool = False) -> tuple[bool, str]:
+    """Settings "Use this folder": make `path` the data folder from the next start.
+    Creates it and writes the marker, but moves or copies nothing. A non-empty
+    folder without the marker is only marked with `confirm`. Returns (ok, message)."""
+    p = Path(path.strip()).expanduser() if path.strip() else None
+    if p is None or not p.is_absolute():
+        return False, "Give an absolute path (it may start with ~)."
+    try:
+        if p.exists() and not p.is_dir():
+            return False, f"{p} is not a folder."
+        if p.is_dir() and not (p / MARKER).is_file() and any(p.iterdir()) and not confirm:
+            return False, (f"{p} already holds files but no {MARKER} marker. If it is the "
+                           "folder you mean, tick the confirmation and press the button again.")
+        p.mkdir(parents=True, exist_ok=True)
+        (p / MARKER).write_text("")
+        _write_pointer(p)
+    except OSError as e:
+        return False, f"Could not use {p}: {e.strerror or e}"
+    return True, (f"Saved. Dandelion will use {p} after you restart it. Nothing was moved or "
+                  "copied: to bring your dialogs along, run dandelion backup now and "
+                  "dandelion restore after the restart.")
+
+
+def _write_pointer(p: Path) -> None:
+    f = _pointer_file()
+    f.parent.mkdir(parents=True, exist_ok=True)
+    tmp = f.with_name(f"{f.name}.tmp")
+    tmp.write_text(str(p))
+    tmp.replace(f)
+
+
+def clear_pointer() -> tuple[bool, str]:
+    """Settings "Back to the default": forget the pointer; the data stays where it is."""
+    try:
+        _pointer_file().unlink(missing_ok=True)
+    except OSError as e:
+        return False, f"Could not clear the setting: {e.strerror or e}"
+    return True, (f"Saved. Dandelion will use {config_dir()} after you restart it. "
+                  "Nothing was moved.")
 
 
 # The data root's names before the renames, newest first.
@@ -152,6 +265,8 @@ def rekey_papers(home: Path | None = None) -> int:
     """Re-key the current root's papers against every old root. Cheap and
     idempotent, so the CLI runs it on every start: it finishes a move whose
     re-keying was cut short."""
+    if store_refusal():
+        return 0
     return _rekey_moved_papers(data_root(), _legacy_roots((home or Path.home()) / ".config"))
 
 
@@ -248,7 +363,7 @@ def migrate_repo_data(old: Path | None = None) -> list[str]:
     from . import paper
     old = old or REPO_DATA
     new = data_root()
-    if not old.is_dir() or _same(old, new):
+    if not old.is_dir() or _same(old, new) or store_refusal():
         return []
     new.mkdir(parents=True, exist_ok=True)
     moved = [f"papers/{m}" for m in paper.migrate_legacy_cache(old / "papers")]
@@ -285,7 +400,7 @@ def mark_serving() -> None:
     """Record this `dandelion serve` process, so restore can refuse to run under it."""
     import atexit
     f = _pidfile()
-    if running_server_pid():
+    if store_refusal() or running_server_pid():
         return                         # don't clobber a live server's record; if
     try:                               # this serve then fails to bind, it's intact
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -435,6 +550,7 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
     import json
     from .paper import _cache_dir, _md_key
     from .secrets_store import secrets_path
+    check_writable()
     pid = running_server_pid()
     if pid:
         # the app holds notebooks in memory and rewrites the store on every
