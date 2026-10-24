@@ -546,6 +546,42 @@ marked automatically when the folder comes from `DANDELION_DATA` (or the default
 for a folder chosen in Settings, "Use this folder" writes the marker. With `DANDELION_DATA` you can also
 `touch <folder>/.dandelion-store`.
 
+**Using one data folder from two Macs.** A synced folder (pCloud, say) can be the data
+folder on two Macs, but only one should edit at a time. While Dandelion runs, it keeps
+a small `.dandelion-lease` file in the folder saying which Mac has it open, refreshed
+every minute. Macs are told apart by their hardware id (two Macs can share a hostname),
+and the banner names them by their computer name (System Settings → General → Sharing).
+If you start Dandelion on the other Mac meanwhile, it opens the folder read-only and
+shows *In use by <Mac> since <time> (last seen <n> min ago). Dandelion is read-only
+here.* ("last seen" comes from the other Mac's clock.) You can read everything, but
+nothing you type is saved. Quit Dandelion on the first Mac, wait for the sync, and press
+**Check again**: once that Mac's lease is gone, or this Mac has watched it go unchanged
+for 5 minutes, this one takes over and reloads the dialogs from the folder, so it starts
+from what the first Mac saved. Edits the read-only Mac could not save are kept first
+in an `unsaved-<time>-….json` file on that Mac only (in `~/.config/dandelion`, or in
+`~/Library/Application Support/dandelion` when that folder is a link into a cloud
+drive; never synced or backed up), and the message names it. If the first Mac
+crashed, **Check again** tells you when it can take over: once its lease has stayed
+unchanged for 5 minutes since this Mac first looked. A lease more than an hour old is taken at start without asking;
+the page then says *Took over the data folder from <Mac> (last seen …)*. **Take over**
+takes it straight away; use it only when the other Mac is not running Dandelion on
+this folder, since edits there that have not synced yet may be lost. Neither button
+works while an AI answer is still coming in.
+
+The Mac that loses the lease (the other one pressed **Take over**) goes read-only at
+its next refresh, within a minute: the banner appears on the next thing you do in the
+page, or within 30 s on a page left alone. A Mac that slept (or lost the folder) for
+more than 4 minutes stops saving the moment it wakes, since the other Mac may have
+taken over meanwhile: it shows that its hold lapsed, and **Check again** (after about
+45 s, so the other Mac's changes can sync in) takes the folder back if nobody else did.
+If the folder did not change meanwhile, what you typed on waking is kept and saved;
+if it did, the dialogs are reloaded and your typing goes to the `unsaved-…` file. None
+of this applies to the default folder, `~/.config/dandelion`: it is never synced, so
+sleep never makes it read-only.
+Settings shows which Mac has the folder open. Each Mac sees the other's lease only
+after the sync, so this is a warning, not a lock: two Macs that start within one sync
+delay of each other can both think the folder is free.
+
 The notebook store also protects itself. Every save keeps the previous version
 as `dialogs-<target>.json.bak`, and while you work a timestamped copy goes to
 `backups/` every 15 minutes, newest 20 kept (`DANDELION_SNAPSHOT_MINUTES`,
