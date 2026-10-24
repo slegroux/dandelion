@@ -134,7 +134,7 @@ def test_restore_refused_while_app_running(tmp_path, monkeypatch, capsys):
 
 
 def test_mark_serving_records_own_pid_which_restore_ignores(tmp_path):
-    datadir.mark_serving()
+    datadir.claim_serving()
     assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
     assert datadir.running_server_pid() is None                # it's us, not another app
 
@@ -186,5 +186,6 @@ def test_concurrent_loads_of_a_corrupt_store_recover_once(tmp_path):
 def test_second_serve_does_not_clobber_live_pidfile(tmp_path, monkeypatch):
     (tmp_path / ".serve.pid").write_text("424242")
     monkeypatch.setattr(datadir, "_pid_alive", lambda pid: True)
-    datadir.mark_serving()
+    with pytest.raises(datadir.AppRunning):
+        datadir.claim_serving()
     assert (tmp_path / ".serve.pid").read_text() == "424242"

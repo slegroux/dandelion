@@ -343,6 +343,7 @@ def _old_root(tmp_path, name="pappus"):
 def test_adopt_refuses_while_an_old_server_runs_there(tmp_path, monkeypatch):
     monkeypatch.delenv("DANDELION_DATA", raising=False)
     old = _old_root(tmp_path)
+    monkeypatch.setattr(datadir, "_looks_like_dandelion", lambda pid: True)
     (old / ".serve.pid").write_text(str(os.getppid()))            # alive, and not us
     with pytest.raises(datadir.LegacyAppRunning) as e:
         datadir.adopt_legacy_root(home=tmp_path)
@@ -358,6 +359,7 @@ def test_serve_refuses_while_an_old_server_runs(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("DANDELION_DATA", raising=False)
     monkeypatch.setenv("DANDELION_HOST", "127.0.0.1")
     old = _old_root(tmp_path / "home")
+    monkeypatch.setattr(datadir, "_looks_like_dandelion", lambda pid: True)
     (old / ".serve.pid").write_text(str(os.getppid()))
     monkeypatch.setattr(datadir, "migrate_repo_data", lambda old=None: [])
     monkeypatch.setattr(datadir, "leftovers", lambda old=None: [])
@@ -606,3 +608,15 @@ def test_demo_data_refuses_real_data(tmp_path):
     r = run(mine)
     assert r.returncode != 0 and "--force" in r.stderr
     assert (mine / "data" / "dialogs-kernel.json").read_text() == '{"real": []}'
+
+
+def test_adopt_refuses_for_a_pappus_era_command_line(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.delenv("DANDELION_DATA", raising=False)
+    old = _old_root(tmp_path)
+    (old / ".serve.pid").write_text("4242")
+    monkeypatch.setattr(datadir, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(
+        a, 0, "/x/.venv/bin/python3 -m pappus.cli serve\n", ""))
+    with pytest.raises(datadir.LegacyAppRunning):
+        datadir.adopt_legacy_root(home=tmp_path)

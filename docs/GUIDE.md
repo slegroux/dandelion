@@ -284,6 +284,11 @@ uv run python -m dandelion.cli doctor h100
 uv run python -m dandelion.cli serve        # http://localhost:8000
 ```
 
+One server per data folder: `serve` refuses to start while another Dandelion
+server uses the same `DANDELION_DATA`, because two would overwrite each other's
+dialogs. For a second server, give it its own folder and port, e.g.
+`DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 uv run python -m dandelion.cli serve`.
+
 In the UI, the top-right dropdown flips between `local` and `h100`. A green LED =
 live server; amber = running on the mock (with a banner telling you why).
 
@@ -390,6 +395,8 @@ Each cell shows an estimated **token count**, and a live meter at the foot of th
 dialog reads out the total context (`AI context ≈ N tokens · M/K cells in`) — so
 you can see yourself approaching the limit. **Pin** a cell (toggle next to Mute)
 to keep it in context even when older cells are trimmed.
+The **Above ▾** menu on every cell but the first has **Start fresh here**, which mutes
+every cell above (pinned cells stay), and **Unmute all above**, which unmutes them all (including cells you muted one by one).
 
 This applies to the bundled **kernel** backend. On a **solveit** target,
 the server assembles the dialog context itself.

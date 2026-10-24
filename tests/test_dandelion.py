@@ -646,6 +646,90 @@ def test_cell_mute_route_toggles():
     assert m.muted is False
 
 
+def _fresh_dialog(b, name="fresh"):
+    a, pin, c, cur_ = (b.add(name, t, "note") for t in ("a", "pinned", "c", "ask"))
+    b.set_pinned(name, pin.id, True)
+    return a, pin, c, cur_
+
+
+def test_set_muted_above_skips_self_and_pinned_and_counts(monkeypatch):
+    b = MockBackend()
+    a, pin, c, cur_ = _fresh_dialog(b)
+    saves = []
+    monkeypatch.setattr(b, "_save", lambda: saves.append(1))
+    assert b.set_muted_above("fresh", cur_.id, True) == 2
+    assert (a.muted, pin.muted, c.muted, cur_.muted) == (True, False, True, False)
+    assert len(saves) == 1                                   # one save per call
+    assert b.set_muted_above("fresh", cur_.id, True) == 0    # nothing left to change
+    assert b.set_muted_above("fresh", cur_.id, False) == 2
+    assert not (a.muted or c.muted) and len(saves) == 2
+
+
+def test_set_muted_above_unknown_id_is_noop(monkeypatch):
+    b = MockBackend()
+    a, pin, c, cur_ = _fresh_dialog(b)
+    saves = []
+    monkeypatch.setattr(b, "_save", lambda: saves.append(1))
+    assert b.set_muted_above("fresh", "_missing", True) == 0
+    assert not any(m.muted for m in (a, pin, c, cur_)) and saves == []
+
+
+def test_fresh_start_drops_cli_sessions_but_keeps_cost(monkeypatch):
+    import dandelion.app as app
+    from dandelion import claude_cli, codex_cli
+    d = "cell/fresh-cli"
+    app.STATE["dialog"] = d
+    b = app.STATE["backend"]
+    b.messages(d)
+    q1 = b.add(d, "q1", "prompt")
+    q2 = b.add(d, "q2", "prompt")
+    claude_cli.CLI_SESSIONS[d] = {"sent": "", "mode": None, "model": None, "effort": None,
+                                  "id": "S"}
+    cost = {"usd": 1.0, "turns": 1, "input": 0, "output": 0}
+    claude_cli.CLI_COST[d] = dict(cost)
+    codex_cli.CODEX_SESSIONS[d] = {"sent": ""}
+    monkeypatch.setattr(claude_cli, "claude_bin", lambda: "claude")
+    ctx = build_context(b.messages(d), upto_id=q2.id)
+    cmd, _ = claude_cli._build_cmd(d, "q2", ctx, stream=False)
+    assert "--resume" in cmd                      # without the reset, the empty prefix resumes
+    claude_cli.CLI_SESSIONS[d] = {"sent": "", "mode": None, "model": None, "effort": None,
+                                  "id": "S"}
+    app.cell_mute_above(id=q2.id, muted=1)
+    assert q1.muted and d not in claude_cli.CLI_SESSIONS and d not in codex_cli.CODEX_SESSIONS
+    assert claude_cli.CLI_COST[d] == cost
+    cmd, _ = claude_cli._build_cmd(d, "q2", build_context(b.messages(d), upto_id=q2.id),
+                                   stream=False)
+    assert "--resume" not in cmd
+    claude_cli.CLI_COST.pop(d, None)
+
+
+def test_cell_mute_above_route_and_context_after_fresh_start():
+    import dandelion.app as app
+    app.STATE["dialog"] = "cell/mute-above"
+    b = app.STATE["backend"]
+    b.messages("cell/mute-above")
+    a, pin, c, cur_ = _fresh_dialog(b, "cell/mute-above")
+    app.cell_mute_above(id=cur_.id, muted=1)
+    assert [m.muted for m in (a, pin, c, cur_)] == [True, False, True, False]
+    ctx = build_context(b.messages("cell/mute-above"), upto_id=cur_.id)
+    assert "pinned" in ctx and ">a<" not in ctx and ">c<" not in ctx
+    app.cell_mute_above(id=cur_.id, muted=0)
+    assert not (a.muted or c.muted)
+
+
+def test_above_dropdown_not_on_first_cell():
+    import dandelion.app as app
+    from fasthtml.common import to_xml
+    m = Msg(id="_x", msg_type="note", content="hi")
+    assert "Start fresh here" not in to_xml(app.MsgRow(m, num=1))
+    html = to_xml(app.MsgRow(m, num=2))
+    assert "Start fresh here" in html and "Unmute all above" in html
+    assert "Mute every cell above this one (pinned cells stay)" in html
+    assert "including ones you muted yourself" in html
+    assert "Start fresh here" in to_xml(app._cell_edit(m, num=2))     # edit mode too
+    assert "Start fresh here" not in to_xml(app._cell_edit(m, num=1))
+
+
 # ---- Claude via the `claude` CLI (subscription / Max plan) -----------------
 # The CLI session/command logic lives in dandelion.claude_cli; the kernel server
 # routes Claude CLI models to it. Tests drive the module directly, plus one

@@ -94,7 +94,7 @@ def test_unmarked_root_is_refused_and_nothing_is_written(tmp_path, monkeypatch):
     client._save_dialogs("kernel", {"d": [client.Msg(id="1", msg_type="note", content="hi")]})
     client._write_private_dialogs("kernel", {"d"})
     recall.save_schedule({"a": 1})
-    datadir.mark_serving()
+    datadir.claim_serving()
     assert datadir.rekey_papers() == 0
     assert list(empty.iterdir()) == []                   # no store, backups/, .serve.pid, marker
     with pytest.raises(datadir.StoreRefused):
@@ -106,7 +106,7 @@ def test_missing_unmarked_root_is_not_created(tmp_path, monkeypatch):
     gone = tmp_path / "Volumes" / "pcloud"
     monkeypatch.setenv("DANDELION_DATA", str(gone))
     client._save_dialogs("kernel", {"d": []})
-    datadir.mark_serving()
+    datadir.claim_serving()
     assert not gone.exists() and not (tmp_path / "Volumes").exists()
 
 
@@ -260,7 +260,7 @@ def test_b1_serve_pid_lands_in_the_frozen_root(home, tmp_path):
     datadir.freeze_root()
     root = datadir.data_root()
     datadir.use_folder(str(_mk(tmp_path / "x")))
-    datadir.mark_serving()
+    datadir.claim_serving()
     assert (root / ".serve.pid").is_file()
 
 
@@ -280,7 +280,7 @@ def test_b2_a_refusal_is_latched_until_restart(tmp_path, monkeypatch):
     assert datadir.store_refusal()                       # still refused
     client._save_dialogs("kernel", _msg(text="typed-while-unmounted"))
     assert "REMOTE-REAL-WORK" in (d / "dialogs-kernel.json").read_text()
-    datadir.mark_serving()
+    datadir.claim_serving()
     assert not (d / ".serve.pid").exists()
 
 
