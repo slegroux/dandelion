@@ -16,7 +16,7 @@ import os
 import threading
 from pathlib import Path
 
-from .datadir import StoreRefused, check_writable, data_root
+from .datadir import StoreRefused, check_writable, data_root, make_dirs
 
 
 # One lock for read-modify-write: the sidebar can send several updates at once.
@@ -52,7 +52,7 @@ def save(layout: dict) -> None:
             check_writable(p)
         except StoreRefused:
             return                                   # unmarked folder: the banner says so
-        p.parent.mkdir(parents=True, exist_ok=True)
+        make_dirs(p.parent)
         tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(json.dumps(layout, indent=2))
         tmp.replace(p)                               # atomic, like the dialog store

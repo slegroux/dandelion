@@ -126,6 +126,7 @@ def main() -> int:
     if store.exists() and not marker.exists() and not a.force:
         sys.exit(f"refusing to replace {store}: this script didn't write it (--force to anyway)")
     data.mkdir(parents=True, exist_ok=True)
+    (data / ".dandelion-store").write_text("")     # a data folder needs its marker
     (root / "papers").mkdir(exist_ok=True)
     os.environ["DANDELION_DATA"] = str(data)       # before importing dandelion
 

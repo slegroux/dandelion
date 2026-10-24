@@ -295,8 +295,10 @@ def publish_dialog(backend, dialog: str, dest: str, title: str = "Dandelion",
     Returns ``{"slug", "posts", "pruned", "files", "render_ok", "render_detail"}``.
     """
     import os
+    from .datadir import check_writable
     from .nbdev_export import _git_identity, write_files
 
+    check_writable(dest)
     if author is None:
         author = _git_identity()[0] or None
 
@@ -343,8 +345,10 @@ def build_blog(backend, dialogs: list[str], dest: str, title: str = "Dandelion",
     ``{"posts", "files", "render_ok", "render_detail"}``. Post slugs are made
     unique so two dialogs named ``foo/a`` and ``bar/a`` don't collide.
     """
+    from .datadir import check_writable
     from .nbdev_export import _git_identity, write_files
 
+    check_writable(dest)
     if author is None:
         author = _git_identity()[0] or None   # git user.name, or omit the byline
 

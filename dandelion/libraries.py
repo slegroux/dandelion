@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .datadir import check_writable
+from .datadir import check_writable, make_dirs
 from .export import slug
 
 
@@ -37,7 +37,7 @@ def save(libs: list[dict]) -> None:
     p = _path()
     try:
         check_writable(p)
-        p.parent.mkdir(parents=True, exist_ok=True)
+        make_dirs(p.parent)
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(libs, indent=2))
         tmp.replace(p)                       # atomic

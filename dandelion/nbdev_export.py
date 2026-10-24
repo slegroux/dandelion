@@ -146,6 +146,9 @@ def _module_files(modules: dict[str, list[dict]]) -> dict[str, str]:
 def write_files(dest: str, files: dict[str, str]) -> list[str]:
     """Write ``{relpath: content}`` under ``dest``, creating dirs. Returns paths."""
     import os
+
+    from .datadir import check_writable
+    check_writable(dest)
     written = []
     for rel, content in sorted(files.items()):
         path = os.path.join(dest, rel)

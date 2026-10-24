@@ -194,7 +194,7 @@ def _write_private_dialogs(key: str, names: set[str]) -> None:
     p = _private_dialogs_path(key)
     try:
         _datadir.check_writable(p)
-        p.parent.mkdir(parents=True, exist_ok=True)
+        _datadir.make_dirs(p.parent)
         if not names:
             p.unlink(missing_ok=True)
             return
@@ -268,7 +268,7 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
     with _SAVE_LOCK:
         try:
             _datadir.check_writable(p)  # an unmarked folder: the banner says so
-            p.parent.mkdir(parents=True, exist_ok=True)
+            _datadir.make_dirs(p.parent)
             private_names = _read_private_dialogs(key)
             public = {}
             private = {}
@@ -285,8 +285,8 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
                 _write_dialog_store(local, private)
             elif local.exists():
                 local.unlink()
-        except _datadir.StoreRefused:
-            pass
+        except _datadir.StoreRefused as e:
+            _datadir.warn_refused(e)
         except OSError as e:           # never let a disk hiccup break the app,
             import sys                 # but don't hide it either
             print(f"[dandelion] WARNING: could not save {p}: {e}", file=sys.stderr)

@@ -39,12 +39,15 @@ def test_precedence_env_then_pointer_then_default(home, tmp_path, monkeypatch):
 def test_pointer_must_be_an_absolute_path(home):
     _pointer(home).parent.mkdir(parents=True)
     _pointer(home).write_text("relative/dir")
-    assert datadir.read_pointer() is None and datadir.data_root_source() == "default"
+    assert datadir.read_pointer() is None
+    assert "data-root setting is invalid" in datadir.store_refusal()   # never a silent fallback
     _pointer(home).write_text("~/x")
     assert datadir.read_pointer() == home / "x"          # ~ expands
 
 
 def test_use_folder_sets_marker_and_pointer_and_clear_forgets_it(home, tmp_path):
+    (tmp_path / "new").mkdir()
+    (tmp_path / "new" / "other").write_text("x")         # a live drive: parent is not empty
     ok, msg = datadir.use_folder(str(tmp_path / "new" / "store"))
     assert ok and "restart" in msg and "Nothing was moved" in msg
     assert (tmp_path / "new" / "store" / datadir.MARKER).is_file()
@@ -164,7 +167,9 @@ def test_settings_post_sets_and_clears_the_pointer_without_moving_data(home, tmp
     (root / "dialogs-kernel.json").write_text('{"d": []}')
     tc = TestClient(app.app)
     target = tmp_path / "pcloud" / "dandelion"
-    r = tc.post("/settings/data-folder", data={"action": "use", "path": str(target)})
+    (tmp_path / "pcloud").mkdir()
+    r = tc.post("/settings/data-folder", data={"action": "use", "path": str(target),
+                                               "confirm": "on"})
     assert "restart" in r.text and datadir.read_pointer() == target
     assert (target / datadir.MARKER).is_file()
     assert list(target.iterdir()) == [target / datadir.MARKER]           # nothing copied in
@@ -221,3 +226,204 @@ def test_keys_tools_and_pointer_stay_out_of_the_data_folder(home, tmp_path, monk
         assert not [n for n in t.getnames() if "secrets" in n]
         assert "sk-test" not in "".join(t.extractfile(m).read().decode("utf-8", "ignore")
                                         for m in t.getmembers() if m.isfile())
+
+
+# ---- review fixes ------------------------------------------------------------
+def _msg(i="1", text="hi"):
+    return {"d": [client.Msg(id=i, msg_type="note", content=text)]}
+
+
+def _real_store(d, text="REMOTE-REAL-WORK"):
+    d.mkdir(exist_ok=True)
+    (d / datadir.MARKER).write_text("")
+    (d / "dialogs-kernel.json").write_text(json.dumps(
+        {"d": [{"id": "r", "msg_type": "note", "content": text}]}))
+
+
+def test_b1_a_pointer_change_does_not_redirect_saves_until_restart(home, tmp_path):
+    root = home / ".config" / "dandelion"
+    datadir.claim_default_root()
+    datadir.freeze_root()
+    client._save_dialogs("kernel", _msg(text="local-old"))
+    other = tmp_path / "pcloud"
+    _real_store(other)
+    assert datadir.use_folder(str(other))[0]
+    assert datadir.data_root() == root and datadir.pending_root() == other
+    client._save_dialogs("kernel", _msg(text="local-new"))
+    assert "REMOTE-REAL-WORK" in (other / "dialogs-kernel.json").read_text()   # intact
+    assert "local-new" in (root / "dialogs-kernel.json").read_text()
+    datadir.unfreeze_root()
+    assert datadir.data_root() == other                  # a restart picks it up
+
+
+def test_b1_serve_pid_lands_in_the_frozen_root(home, tmp_path):
+    datadir.freeze_root()
+    root = datadir.data_root()
+    datadir.use_folder(str(_mk(tmp_path / "x")))
+    datadir.mark_serving()
+    assert (root / ".serve.pid").is_file()
+
+
+def _mk(p):
+    p.mkdir()
+    (p / datadir.MARKER).write_text("")
+    return p
+
+
+def test_b2_a_refusal_is_latched_until_restart(tmp_path, monkeypatch):
+    d = tmp_path / "pcloud"
+    d.mkdir()
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    datadir.freeze_root()
+    client._save_dialogs("kernel", _msg(text="typed-while-unmounted"))
+    _real_store(d)                                       # the drive mounts: marker + real store
+    assert datadir.store_refusal()                       # still refused
+    client._save_dialogs("kernel", _msg(text="typed-while-unmounted"))
+    assert "REMOTE-REAL-WORK" in (d / "dialogs-kernel.json").read_text()
+    datadir.mark_serving()
+    assert not (d / ".serve.pid").exists()
+
+
+def test_frozen_root_stops_writing_when_the_mount_goes_away(tmp_path, monkeypatch):
+    d = _mk(tmp_path / "pcloud")
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    datadir.freeze_root()
+    assert datadir.store_refusal() is None
+    (d / datadir.MARKER).unlink()
+    d.rmdir()
+    client._save_dialogs("kernel", _msg())
+    assert not d.exists()                                # never recreated
+
+
+def test_b3_blog_and_exports_never_write_into_a_refused_root(tmp_path, monkeypatch):
+    from dandelion import app, blog, nbdev_export
+    gone = tmp_path / "Volumes" / "pcloud"
+    monkeypatch.setenv("DANDELION_DATA", str(gone))
+    with pytest.raises(datadir.StoreRefused):
+        blog.publish_dialog(app.STATE["backend"], "demo/welcome", blog.default_blog_dir())
+    with pytest.raises(datadir.StoreRefused):
+        blog.build_blog(app.STATE["backend"], ["demo/welcome"], blog.default_blog_dir())
+    with pytest.raises(datadir.StoreRefused):
+        nbdev_export.write_files(str(gone / "lib"), {"a.txt": "x"})
+    r = TestClient(app.app).get("/publish/blog", follow_redirects=False)
+    assert r.status_code == 303                          # flashed, not a 500
+    assert not (tmp_path / "Volumes").exists()
+
+
+def test_n3_upload_into_a_refused_root_flashes(tmp_path, monkeypatch):
+    from dandelion import app
+    d = tmp_path / "unmounted"
+    d.mkdir()
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    monkeypatch.delenv("DANDELION_PAPERS")
+    r = TestClient(app.app).post("/paper/open", files={"pdf": ("a.pdf", b"%PDF-1")})
+    assert r.status_code == 200 and list(d.iterdir()) == []
+
+
+def test_s1_empty_folder_and_empty_parent_need_confirmation(home, tmp_path):
+    empty = tmp_path / "mountpoint"
+    empty.mkdir()
+    ok, msg = datadir.use_folder(str(empty))
+    assert not ok and "Is your cloud drive running?" in msg and list(empty.iterdir()) == []
+    ok, msg = datadir.use_folder(str(empty / "dandelion"))          # parent is empty
+    assert not ok and "Is your cloud drive running?" in msg and list(empty.iterdir()) == []
+    assert datadir.use_folder(str(empty), confirm=True)[0]
+    assert (empty / datadir.MARKER).is_file()
+
+
+def test_s1_the_currently_refused_root_needs_confirmation_and_parent_must_exist(
+        home, tmp_path, monkeypatch):
+    d = tmp_path / "pc"
+    d.mkdir()
+    (d / "x").write_text("")
+    r = d / "dandelion"
+    monkeypatch.setenv("DANDELION_DATA", str(r))
+    ok, msg = datadir.use_folder(str(r))
+    assert not ok and "cloud drive" in msg and not r.exists()
+    ok, msg = datadir.use_folder(str(tmp_path / "nope" / "deep"), confirm=True)
+    assert not ok and "does not exist" in msg and not (tmp_path / "nope").exists()
+
+
+def test_s2_an_unreadable_root_renders_instead_of_500(tmp_path, monkeypatch):
+    from dandelion import app
+    d = tmp_path / "locked"
+    d.mkdir()
+    d.chmod(0)
+    try:
+        monkeypatch.setenv("DANDELION_DATA", str(d))
+        assert "Cannot access" in datadir.store_refusal()
+        tc = TestClient(app.app)
+        assert tc.get("/").status_code == 200 and tc.get("/settings").status_code == 200
+    finally:
+        d.chmod(0o755)
+
+
+def test_s3_an_existing_unmarked_store_is_grandfathered(tmp_path, monkeypatch, capsys):
+    d = tmp_path / "old"
+    d.mkdir()
+    (d / "dialogs-kernel.json").write_text("{}")
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    assert datadir.store_refusal()                       # until startup decides
+    datadir.freeze_root()
+    assert datadir.store_refusal() is None and (d / datadir.MARKER).is_file()
+    assert "marked existing store" in capsys.readouterr().err
+
+
+def test_s3_env_refusal_says_how_to_fix_it(tmp_path, monkeypatch, capsys):
+    d = tmp_path / "empty"
+    d.mkdir()
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    datadir.freeze_root()
+    assert f"touch '{d}/.dandelion-store' or unset DANDELION_DATA" in datadir.store_refusal()
+    assert "no .dandelion-store marker" in capsys.readouterr().err       # printed at start
+    client._save_dialogs("kernel", _msg())
+    client._save_dialogs("kernel", _msg())
+    assert capsys.readouterr().err.count("not saving") == 1             # logged once
+
+
+def test_s4_a_symlinked_default_root_is_not_exempt(home, tmp_path):
+    mount = tmp_path / "pcloud-empty"
+    mount.mkdir()
+    (home / ".config").mkdir(parents=True)
+    (home / ".config" / "dandelion").symlink_to(mount, target_is_directory=True)
+    msg = datadir.store_refusal()
+    assert msg and "is a link" in msg
+    datadir.claim_default_root()
+    client._save_dialogs("kernel", _msg())
+    assert list(mount.iterdir()) == []
+    (mount / "dialogs-kernel.json").write_text("{}")     # a real store behind the link
+    datadir.freeze_root()
+    assert datadir.store_refusal() is None
+
+
+def test_s5_an_invalid_pointer_is_refused_not_ignored(home):
+    for bad in ("/a\n/b\n", "relative", "\n", ""):
+        _pointer(home).parent.mkdir(parents=True, exist_ok=True)
+        _pointer(home).write_text(bad)
+        assert "data-root setting is invalid" in datadir.store_refusal(), bad
+        assert str(_pointer(home)) in datadir.store_refusal()
+    client._save_dialogs("kernel", _msg())
+    assert not (home / ".config" / "dandelion" / "dialogs-kernel.json").exists()
+
+
+def test_s6_dangerous_targets_are_refused(home, tmp_path):
+    from pathlib import Path
+    for bad in ("/", str(home), "~", str(home / ".config"), str(datadir.config_dir()),
+                str(datadir.REPO_DATA), str(datadir.REPO_DATA.parent)):
+        assert not datadir.use_folder(bad, confirm=True)[0], bad
+    assert datadir.read_pointer() is None
+    _pointer(home).parent.mkdir(parents=True)
+    _pointer(home).write_text("/")
+    assert datadir.read_pointer() is None and datadir.store_refusal()
+    assert Path("/") not in [datadir.data_root()]
+
+
+def test_s7_backup_on_a_refused_root_exits_nonzero(tmp_path, monkeypatch, capsys):
+    from dandelion import cli
+    d = tmp_path / "unmounted"
+    d.mkdir()
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    monkeypatch.chdir(tmp_path)
+    assert cli.cmd_backup([str(tmp_path / "b.tar.gz")]) == 1
+    assert "backup refused" in capsys.readouterr().err
+    assert not (tmp_path / "b.tar.gz").exists()

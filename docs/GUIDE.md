@@ -532,7 +532,9 @@ and `just restore` after the restart. API keys and the Ask AI tool policy always
 stay in `~/.config/dandelion`, never in the data folder. A folder other than the
 default needs a `.dandelion-store` marker, which **Use this folder** writes; without
 it (an unmounted drive, say pCloud not running) Dandelion refuses the folder, writes
-nothing there, and shows a banner until you pick another folder or use this one.
+nothing there, and shows a banner until you pick another folder or use this one. The folder in use is fixed at start, so a change in Settings (or a drive that
+mounts late) only counts after a restart. An existing store that has no marker yet is
+marked automatically; with `DANDELION_DATA` you can also `touch <folder>/.dandelion-store`.
 
 The notebook store also protects itself. Every save keeps the previous version
 as `dialogs-<target>.json.bak`, and while you work a timestamped copy goes to

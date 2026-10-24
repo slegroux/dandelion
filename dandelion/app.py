@@ -500,6 +500,7 @@ def _ensure_target() -> None:
     if STATE.get("_target_ready"):
         return
     STATE["_target_ready"] = True
+    datadir.freeze_root()                    # the data folder is fixed until restart
     use_target(_initial_target())
 
 
@@ -2089,6 +2090,7 @@ def _data_folder_card(msg=None):
     """Settings row: where the data live, where that comes from, and how to change it."""
     root, src = datadir.data_root(), datadir.data_root_source()
     env = src == "env"
+    refused, pending = datadir.store_refusal(), datadir.pending_root()
     why = {"env": "set by the DANDELION_DATA environment variable, which overrides the setting below",
            "pointer": f"chosen here (saved in {datadir.config_dir() / 'data-root'})",
            "default": "the default"}[src]
@@ -2096,15 +2098,18 @@ def _data_folder_card(msg=None):
         Div("Data folder", Span(" · dialogs, papers, blog; keys stay in "
                                 f"{datadir.config_dir()}", cls="muted"), cls="settings-h"),
         Div(f"Using {root}", Span(f"  ·  {why}", cls="muted"), cls="prov-card"),
-        (Div("⚠ ", datadir.store_refusal(), cls="banner") if datadir.store_refusal() else ""),
+        (Div(f"Pending: {pending}. It applies after you restart Dandelion; until then "
+             f"{root} stays in use.", cls="muted small") if pending else ""),
+        (Div("⚠ ", refused, cls="banner") if refused else ""),
         (Div(msg[1], cls="saved" if msg[0] else "banner") if msg else ""),
         Form(
             Input(type="text", name="path", placeholder="/absolute/path/to/folder",
                   value=str(datadir.read_pointer() or ""), disabled=env, cls="keyinput",
                   aria_label="Data folder"),
             Div(Input(type="checkbox", name="confirm", id="df_confirm", disabled=env),
-                Label(" This folder already has other files; mark it as a Dandelion data "
-                      "folder anyway", fr="df_confirm"), cls="muted small"),
+                Label(" I am sure. Is your cloud drive running? An unmounted drive looks like "
+                      "an empty folder; this also covers a folder that already has other "
+                      "files", fr="df_confirm"), cls="muted small"),
             Div("Applies after you restart Dandelion. It never moves or copies your existing "
                 "dialogs: to bring them along, run dandelion backup first and dandelion "
                 "restore after the restart.", cls="muted small"),
@@ -2467,9 +2472,9 @@ def Page():
     banner = (Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
                   cls="banner") if STATE["warning"] else None)
     from . import client as _client              # a recovered (corrupt) dialog store
+    refused = datadir.store_refusal()
     store_notes = [Div("⚠ ", n, cls="banner") for n in
-                   [*([datadir.store_refusal()] if datadir.store_refusal() else []),
-                    *_client.STORE_NOTICES]]
+                   [*([refused] if refused else []), *_client.STORE_NOTICES]]
     return Html(
         # *app.hdrs carries htmx (+ fasthtml.js): without it the per-cell
         # hx-post buttons render but do nothing, since we return a full Html
@@ -3965,8 +3970,12 @@ def publish_blog():
     from starlette.responses import RedirectResponse
     from . import blog
     dialog = cur("dialog")
-    result = blog.publish_dialog(STATE["backend"], dialog, blog.default_blog_dir(),
-                                 title="Dandelion Blog", date=date.today().isoformat())
+    try:
+        result = blog.publish_dialog(STATE["backend"], dialog, blog.default_blog_dir(),
+                                     title="Dandelion Blog", date=date.today().isoformat())
+    except datadir.StoreRefused as e:
+        set_cur("flash", f"Not published: {e}")
+        return RedirectResponse("/", status_code=303)
     if not result["render_ok"]:
         set_cur("flash", f"Post written to {blog.default_blog_dir()} — {result['render_detail']}")
         return RedirectResponse("/", status_code=303)
@@ -4093,8 +4102,8 @@ def _save_upload(pdf) -> tuple[str, str] | None:
         return None
     import hashlib
     updir = paperlib._cache_dir() / "uploads"
-    paperlib.check_writable(updir)
-    updir.mkdir(parents=True, exist_ok=True)
+    datadir.check_writable(updir)
+    datadir.make_dirs(updir)
     dst = updir / (hashlib.sha1(data).hexdigest()[:16] + ".pdf")
     if not dst.exists():                         # identical content already saved →
         dst.write_bytes(data)                    # keep it (and its mtime) so the markdown
@@ -4148,8 +4157,8 @@ def _record_paper_source(dialog: str, p: dict) -> None:
         return
     try:
         f = _paper_sources_file()
-        paperlib.check_writable(f)
-        f.parent.mkdir(parents=True, exist_ok=True)
+        datadir.check_writable(f)
+        datadir.make_dirs(f.parent)
         srcs = _load_paper_sources()
         srcs[dialog] = {"source": src, "name": p.get("name", "")}
         f.write_text(json.dumps(srcs, indent=1))
@@ -4163,7 +4172,11 @@ def _paper_source_for(dialog: str) -> dict | None:
 
 @rt("/paper/open", methods=["post"])
 def paper_open(pdf: UploadFile = None, path: str = "", url: str = ""):
-    up = _save_upload(pdf)                       # an uploaded file takes precedence
+    try:
+        up = _save_upload(pdf)                   # an uploaded file takes precedence
+    except datadir.StoreRefused as e:
+        set_cur("flash", f"Not saved: {e}")
+        return Page()
     if up:
         _convert_paper_async(*up)
         return Page()

@@ -21,6 +21,10 @@ def _isolated_user_data(tmp_path, monkeypatch):
     monkeypatch.setenv("DANDELION_PAPERS", str(tmp_path / "papers"))
     monkeypatch.setenv("DANDELION_SECRETS", str(tmp_path / "secrets.json"))
     monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "tools.json"))
+    from dandelion import datadir
+    datadir.unfreeze_root()                      # serve freezes the root; tests look it up afresh
+    yield
+    datadir.unfreeze_root()
 
 
 def pytest_configure(config):

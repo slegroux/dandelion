@@ -54,28 +54,79 @@ def _pointer_file() -> Path:
     return config_dir() / "data-root"
 
 
-def read_pointer() -> Path | None:
-    """The folder the pointer file names (one absolute path), else None."""
+def _dangerous(p: Path) -> bool:
+    """Folders that must never be a data folder: /, $HOME, anything above the config
+    dir (backup would tar it), and the repo (where `just sync` once pushed data)."""
+    def real(x: Path) -> Path:
+        try:
+            return x.resolve()
+        except (OSError, RuntimeError):
+            return x
+    r, cfg, repo = real(p), config_dir(), real(REPO_DATA.parent)
+    return (r in {Path(r.anchor), real(Path.home()), *cfg.parents, *real(cfg).parents}
+            or r == repo or repo in r.parents)
+
+
+def _pointer_state() -> tuple[Path | None, str | None]:
+    """(folder, None) for a good pointer file, (None, problem) for one that is
+    there but not exactly one usable absolute path, (None, None) when absent."""
     try:
-        text = _pointer_file().read_text().strip()
-    except OSError:
-        return None
-    p = Path(text).expanduser() if text else None
-    return p if p and p.is_absolute() else None
+        text = _pointer_file().read_text()
+    except FileNotFoundError:
+        return None, None
+    except OSError as e:
+        return None, f"unreadable: {e.strerror or e}"
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+    if len(lines) != 1 or "\0" in lines[0]:
+        return None, "it must hold exactly one path"
+    p = Path(lines[0]).expanduser()
+    if not p.is_absolute():
+        return None, "the path is not absolute"
+    if _dangerous(p):
+        return None, f"{p} cannot be a data folder"
+    return p, None
+
+
+def read_pointer() -> Path | None:
+    """The folder a good pointer file names, else None."""
+    return _pointer_state()[0]
+
+
+def _resolve() -> tuple[Path, str, str | None]:
+    """(root, source, problem) as the environment and pointer file say right now."""
+    env = os.environ.get("DANDELION_DATA")
+    if env:
+        return Path(env).expanduser(), "env", None
+    p, bad = _pointer_state()
+    if p:
+        return p, "pointer", None
+    if bad:
+        return config_dir(), "pointer", f"The data-root setting is invalid ({_pointer_file()}): {bad}"
+    return config_dir(), "default", None
+
+
+# The root and whether it is refused are decided once per process (freeze_root, at
+# serve start) and stay that way until restart: the dialogs in memory were loaded
+# from that root, so a pointer change or a mount appearing later must not redirect
+# saves. Without it (tests, one-shot CLI commands) everything is looked up afresh.
+_FROZEN: dict | None = None
+
+
+def data_root() -> Path:
+    return _FROZEN["root"] if _FROZEN else _resolve()[0]
 
 
 def data_root_source() -> str:
     """Why data_root() is what it is: 'env' | 'pointer' | 'default'."""
-    if os.environ.get("DANDELION_DATA"):
-        return "env"
-    return "pointer" if read_pointer() else "default"
+    return _FROZEN["source"] if _FROZEN else _resolve()[1]
 
 
-def data_root() -> Path:
-    base = os.environ.get("DANDELION_DATA")
-    if base:
-        return Path(base).expanduser()
-    return read_pointer() or config_dir()
+def pending_root() -> Path | None:
+    """The folder a restart would use, when that differs from the one in use."""
+    if not _FROZEN:
+        return None
+    root, _, bad = _resolve()
+    return None if bad or root == _FROZEN["root"] else root
 
 
 class StoreRefused(OSError):
@@ -83,15 +134,53 @@ class StoreRefused(OSError):
     the best-effort savers that already swallow disk errors swallow this too."""
 
 
+def _is_default(root: Path) -> bool:
+    """The default root is exempt from the marker, but only as a real directory: a
+    link (adopt_legacy_root keeps a user's link into pCloud) may point at an empty mount."""
+    cfg = config_dir()
+    return not cfg.is_symlink() and _same(root, cfg)
+
+
+def _marker_problem(root: Path) -> str | None:
+    """None when the marker is there, 'missing', or why the folder can't be read."""
+    try:
+        os.stat(root / MARKER)
+        return None
+    except (FileNotFoundError, NotADirectoryError):
+        return "missing"
+    except OSError as e:
+        return f"Cannot access {root} ({e.strerror or e})."
+
+
+def _refusal(root: Path, source: str, bad: str | None) -> str | None:
+    if bad:
+        return bad
+    if _is_default(root):
+        return None
+    m = _marker_problem(root)
+    if m is None:
+        return None
+    if m != "missing":
+        return m
+    base = (f"{root} has no {MARKER} marker; the folder may be an unmounted drive "
+            "(e.g. pCloud not running). Nothing is saved there. ")
+    if source == "env":
+        return base + (f"Start the drive and restart Dandelion; if this is the right folder, run "
+                       f"touch '{root}/{MARKER}' or unset DANDELION_DATA.")
+    if config_dir().is_symlink() and _same(root, config_dir()):
+        return base + (f"{config_dir()} is a link to another place. Start the drive and restart "
+                       f"Dandelion, or run touch '{root}/{MARKER}' if it is the right folder.")
+    return base + ("Start your cloud drive, then restart Dandelion; or open Settings to pick "
+                   "another folder or use this one.")
+
+
 def store_refusal() -> str | None:
     """Why the data root is refused (a message for the UI), or None when it may be
-    used: the default root always may; any other needs its marker file."""
-    root = data_root()
-    if _same(root, config_dir()) or (root / MARKER).is_file():
-        return None
-    return (f"{root} has no {MARKER} marker; the folder may be an unmounted drive "
-            "(e.g. pCloud not running). Nothing is saved there. Open Settings to pick "
-            "another folder or use this one.")
+    used. Once frozen, a refusal stays until restart; an accepted root is still
+    re-checked on every call, so a mount that goes away stops the writes."""
+    if _FROZEN:
+        return _FROZEN["refusal"] or _refusal(_FROZEN["root"], _FROZEN["source"], None)
+    return _refusal(*_resolve())
 
 
 def check_writable(path: Path | str | None = None) -> None:
@@ -103,31 +192,101 @@ def check_writable(path: Path | str | None = None) -> None:
         raise StoreRefused(msg)
 
 
+_warned: set[str] = set()
+
+
+def warn_refused(e: Exception) -> None:
+    """Say on stderr, once per message, that a save was refused."""
+    import sys
+    if str(e) not in _warned:
+        _warned.add(str(e))
+        print(f"[dandelion] WARNING: not saving: {e}", file=sys.stderr)
+
+
+def make_dirs(d: Path) -> None:
+    """mkdir -p for a folder under the data root without ever creating a non-default
+    root itself (a mount that vanished after check_writable must fail, not be recreated)."""
+    root = data_root()
+    if _is_default(root) or root not in d.parents:
+        d.mkdir(parents=True, exist_ok=True)
+        return
+    cur = root
+    for part in d.relative_to(root).parts:
+        cur = cur / part
+        cur.mkdir(exist_ok=True)
+
+
 def claim_default_root() -> None:
     """Write the marker into the default root so it is never refused. Silent and
-    best-effort; called at serve start. Other roots get theirs only from use_folder."""
-    root = data_root()
-    if not _same(root, config_dir()) or (root / MARKER).is_file():
+    best-effort. Other roots get theirs from use_folder, or from freeze_root when
+    they already hold a store."""
+    root = _resolve()[0]
+    if not _is_default(root) or (root / MARKER).is_file():
         return
     with contextlib.suppress(OSError):
         root.mkdir(parents=True, exist_ok=True)
         (root / MARKER).write_text("")
 
 
+def freeze_root() -> None:
+    """Decide the data root and whether it is refused, once, for this process (called
+    at serve start and when the backend is built). A root that already holds a
+    dialogs-*.json is a real store, since an unmounted drive is empty: it is
+    accepted and marked. Anything else unmarked stays refused until restart."""
+    import sys
+    global _FROZEN
+    if _FROZEN:
+        return
+    claim_default_root()
+    root, source, bad = _resolve()
+    msg = _refusal(root, source, bad)
+    if msg and not bad and _marker_problem(root) == "missing":
+        with contextlib.suppress(OSError):
+            if next(root.glob("dialogs-*.json"), None):
+                (root / MARKER).write_text("")
+                print(f"[dandelion] marked existing store at {root}", file=sys.stderr)
+                msg = None
+    _FROZEN = {"root": root, "source": source, "refusal": msg}
+    if msg:
+        print(f"[dandelion] WARNING: {msg}", file=sys.stderr)
+
+
+def unfreeze_root() -> None:
+    """Back to looking the root up on every call (test fixture)."""
+    global _FROZEN
+    _FROZEN = None
+    _warned.clear()
+
+
 def use_folder(path: str, confirm: bool = False) -> tuple[bool, str]:
     """Settings "Use this folder": make `path` the data folder from the next start.
-    Creates it and writes the marker, but moves or copies nothing. A non-empty
-    folder without the marker is only marked with `confirm`. Returns (ok, message)."""
+    Creates only the folder itself (its parent must exist), writes the marker, and
+    moves or copies nothing. Unless it already carries the marker, `confirm` is
+    needed when the folder is empty (an unmounted drive looks empty), holds other
+    files, or is the root being refused now. Returns (ok, message)."""
     p = Path(path.strip()).expanduser() if path.strip() else None
-    if p is None or not p.is_absolute():
+    if p is None or not p.is_absolute() or "\0" in str(p):
         return False, "Give an absolute path (it may start with ~)."
+    if _dangerous(p):
+        return False, f"{p} cannot be a data folder (pick a folder of its own)."
+    drive = ("Is your cloud drive running? An unmounted drive looks like an empty folder. "
+             "If this really is the folder you mean, tick the confirmation and press the "
+             "button again.")
     try:
         if p.exists() and not p.is_dir():
             return False, f"{p} is not a folder."
-        if p.is_dir() and not (p / MARKER).is_file() and any(p.iterdir()) and not confirm:
-            return False, (f"{p} already holds files but no {MARKER} marker. If it is the "
-                           "folder you mean, tick the confirmation and press the button again.")
-        p.mkdir(parents=True, exist_ok=True)
+        if not p.parent.is_dir():
+            return False, f"{p.parent} does not exist. {drive.split(' If ')[0]}"
+        marked = (p / MARKER).is_file()
+        if not marked and not confirm:
+            if p.is_dir() and any(p.iterdir()):
+                return False, (f"{p} already holds files but no {MARKER} marker. If it is "
+                               "the folder you mean, tick the confirmation and press the "
+                               "button again.")
+            if p.is_dir() or not any(p.parent.iterdir()) \
+                    or (_same(p, data_root()) and store_refusal()):
+                return False, drive
+        p.mkdir(exist_ok=True)
         (p / MARKER).write_text("")
         _write_pointer(p)
     except OSError as e:
@@ -141,7 +300,7 @@ def _write_pointer(p: Path) -> None:
     f = _pointer_file()
     f.parent.mkdir(parents=True, exist_ok=True)
     tmp = f.with_name(f"{f.name}.tmp")
-    tmp.write_text(str(p))
+    tmp.write_text(str(p) + "\n")
     tmp.replace(f)
 
 
@@ -403,7 +562,7 @@ def mark_serving() -> None:
     if store_refusal() or running_server_pid():
         return                         # don't clobber a live server's record; if
     try:                               # this serve then fails to bind, it's intact
-        f.parent.mkdir(parents=True, exist_ok=True)
+        make_dirs(f.parent)
         f.write_text(str(os.getpid()))
     except OSError:
         return

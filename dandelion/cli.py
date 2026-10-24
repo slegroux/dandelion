@@ -162,6 +162,10 @@ def cmd_backup(args):
     if not _adopt_legacy_root():
         print("backup refused: stop the older server first (see above)", file=sys.stderr)
         return 1
+    refused = datadir.store_refusal()
+    if refused:
+        print(f"backup refused: {refused}", file=sys.stderr)
+        return 1
     with_secrets = "--with-secrets" in args
     rest = [a for a in args if a != "--with-secrets"]
     dest, n = datadir.backup(rest[0] if rest else None, with_secrets=with_secrets)
@@ -220,8 +224,8 @@ def cmd_serve(_):
             "Use an SSH tunnel for remote access (see the comment in cli.py).")
     if not _move_out_of_repo():
         raise SystemExit("not starting: stop the older server first (see above)")
-    from .datadir import claim_default_root, mark_serving
-    claim_default_root()
+    from .datadir import freeze_root, mark_serving
+    freeze_root()                  # the root and any refusal hold until restart
     mark_serving()
     if reload:
         uvicorn.run("dandelion.app:app", host=host, port=port,
