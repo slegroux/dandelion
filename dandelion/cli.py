@@ -237,6 +237,8 @@ def cmd_serve(_):
     except datadir.AppRunning as e:
         raise SystemExit(str(e)) from None
     if reload:
+        # the worker holds the dialogs, so it takes the lease over from this process
+        os.environ["_DANDELION_RELOAD_WORKER"] = "1"
         uvicorn.run("dandelion.app:app", host=host, port=port,
                     reload=True, reload_dirs=[os.path.dirname(__file__)])
     else:

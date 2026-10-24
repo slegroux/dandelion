@@ -501,6 +501,8 @@ def _ensure_target() -> None:
         return
     STATE["_target_ready"] = True
     datadir.freeze_root()                    # the data folder is fixed until restart
+    if os.environ.get("_DANDELION_RELOAD_WORKER"):
+        datadir.acquire_lease()              # auto-reload serves from this worker process
     use_target(_initial_target())
 
 
@@ -2112,6 +2114,7 @@ def _data_folder_card(msg=None):
         (Div(f"Pending: {pending}. It applies after you restart Dandelion; until then "
              f"{root} stays in use.", cls="muted small") if pending else ""),
         (Div("⚠ ", refused, cls="banner") if refused else ""),
+        (Div(lease, cls="muted small") if (lease := datadir.lease_status()) and not refused else ""),
         (Div(msg[1], cls="saved" if msg[0] else "banner") if msg else ""),
         Form(
             Input(type="text", name="path", placeholder="/absolute/path/to/folder",
@@ -2479,13 +2482,30 @@ PAPER_JS = """
 """
 
 
+def _lease_banner():
+    """Another machine has the data folder open: who, and the two ways out."""
+    text = datadir.lease_banner()
+    if not text:
+        return None
+    return Div(
+        "⚠ ", text,
+        Form(Button("Check again", type="submit"),
+             method="post", action="/lease/check", style="display:inline;margin-left:10px"),
+        Form(Input(type="checkbox", name="confirm", id="lease_confirm"),
+             Label(" ", datadir.lease_takeover_warning(), fr="lease_confirm"),
+             Button("Take over", type="submit"),
+             method="post", action="/lease/take-over", style="display:inline;margin-left:10px"),
+        cls="banner", id="lease-banner")
+
+
 def Page():
-    banner = (Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
+    banner =(Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
                   cls="banner") if STATE["warning"] else None)
     from . import client as _client              # a recovered (corrupt) dialog store
-    refused = datadir.store_refusal()
-    store_notes = [Div("⚠ ", n, cls="banner") for n in
-                   [*([refused] if refused else []), *_client.STORE_NOTICES]]
+    lease = _lease_banner()                      # another machine has the folder open
+    refused = None if lease else datadir.store_refusal()
+    store_notes = [*([lease] if lease else []), *(Div("⚠ ", n, cls="banner") for n in
+                   [*([refused] if refused else []), *_client.STORE_NOTICES])]
     return Html(
         # *app.hdrs carries htmx (+ fasthtml.js): without it the per-cell
         # hx-post buttons render but do nothing, since we return a full Html
@@ -2886,6 +2906,33 @@ def settings_data_folder(action: str = "use", path: str = "", confirm: str = "")
     if action == "clear":
         return SettingsPage(data_msg=datadir.clear_pointer())
     return SettingsPage(data_msg=datadir.use_folder(path, confirm=bool(confirm)))
+
+
+def _leave_read_only(force: bool):
+    """'Check again' / 'Take over': under the save lock, so no save slips in
+    between; the dialogs are reloaded from disk before the first save."""
+    from . import client as _client
+    with _client._SAVE_LOCK:
+        try:
+            _, msg = datadir.take_lease(force=force,
+                                        before=getattr(STATE["backend"], "reload", None))
+        except (_client.StoreUnreadable, OSError) as e:      # still read-only
+            msg = f"Could not reload the dialogs: {e}"
+    set_cur("flash", msg)
+    return Page()
+
+
+@rt("/lease/check", methods=["post"])
+def lease_check():
+    return _leave_read_only(force=False)
+
+
+@rt("/lease/take-over", methods=["post"])
+def lease_take_over(confirm: str = ""):
+    if not confirm:
+        set_cur("flash", datadir.lease_takeover_warning() + " Tick the box to confirm.")
+        return Page()
+    return _leave_read_only(force=True)
 
 
 @rt("/libraries", methods=["get"])

@@ -518,6 +518,14 @@ class _InMemoryBackend:
         if getattr(self, "_store_key", None):
             _save_dialogs(self._store_key, self._dialogs)
 
+    def reload(self) -> None:
+        """Drop the dialogs in memory for the ones on disk (on leaving read-only:
+        another machine may have saved since these were loaded)."""
+        if getattr(self, "_store_key", None):
+            with _SAVE_LOCK:
+                self._dialogs = _load_dialogs(self._store_key)
+                self._undo.clear()
+
     def list_dialogs(self) -> list[str]:
         return list(self._dialogs)
 
