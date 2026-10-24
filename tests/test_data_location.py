@@ -361,7 +361,7 @@ def test_s2_an_unreadable_root_renders_instead_of_500(tmp_path, monkeypatch):
 def test_s3_an_existing_unmarked_store_is_grandfathered(tmp_path, monkeypatch, capsys):
     d = tmp_path / "old"
     d.mkdir()
-    (d / "dialogs-kernel.json").write_text("{}")
+    (d / "dialogs-kernel.json").write_text('{"d": []}')
     monkeypatch.setenv("DANDELION_DATA", str(d))
     assert datadir.store_refusal()                       # until startup decides
     datadir.freeze_root()
@@ -391,7 +391,7 @@ def test_s4_a_symlinked_default_root_is_not_exempt(home, tmp_path):
     datadir.claim_default_root()
     client._save_dialogs("kernel", _msg())
     assert list(mount.iterdir()) == []
-    (mount / "dialogs-kernel.json").write_text("{}")     # a real store behind the link
+    (mount / "dialogs-kernel.json").write_text('{"d": []}')     # a real store behind the link
     datadir.freeze_root()
     assert datadir.store_refusal() is None
 
@@ -427,3 +427,86 @@ def test_s7_backup_on_a_refused_root_exits_nonzero(tmp_path, monkeypatch, capsys
     assert cli.cmd_backup([str(tmp_path / "b.tar.gz")]) == 1
     assert "backup refused" in capsys.readouterr().err
     assert not (tmp_path / "b.tar.gz").exists()
+
+
+# ---- re-review fixes -----------------------------------------------------------
+def test_sf1_case_variants_of_home_and_repo_are_refused(home, tmp_path, monkeypatch):
+    fake_repo = tmp_path / "Checkout" / "app"
+    (fake_repo / "data").mkdir(parents=True)
+    monkeypatch.setattr(datadir, "REPO_DATA", fake_repo / "data")
+    if not (tmp_path / "CHECKOUT").exists():
+        pytest.skip("case-sensitive filesystem")
+    home.mkdir(exist_ok=True)
+    for bad in (str(home).upper() if (tmp_path / "HOME").exists() else str(home),
+                str(tmp_path / "CHECKOUT" / "APP"), str(tmp_path / "checkout" / "APP" / "sub")):
+        assert not datadir.use_folder(bad, confirm=True)[0], bad
+    assert not (fake_repo / datadir.MARKER).exists()
+    assert datadir.read_pointer() is None
+
+
+def test_sf2_the_message_names_the_old_root_to_back_up(home, tmp_path):
+    d = _mk(tmp_path / "new")
+    ok, msg = datadir.use_folder(str(d))
+    assert ok and f"DANDELION_DATA='{home / '.config' / 'dandelion'}' dandelion backup" in msg
+
+
+def test_sf3_make_dirs_never_creates_a_non_default_root(tmp_path, monkeypatch):
+    gone = tmp_path / "a" / "pcloud"
+    monkeypatch.setenv("DANDELION_DATA", str(gone))
+    datadir.make_dirs(gone)
+    with pytest.raises(OSError):
+        datadir.make_dirs(gone / "backups")
+    assert not (tmp_path / "a").exists()
+
+
+def _env_root(tmp_path, monkeypatch, name="old"):
+    d = tmp_path / name
+    d.mkdir()
+    monkeypatch.setenv("DANDELION_DATA", str(d))
+    return d
+
+
+def test_sf4_only_a_readable_non_empty_store_is_grandfathered(tmp_path, monkeypatch):
+    d = _env_root(tmp_path, monkeypatch)
+    (d / "dialogs-a.json").write_text("")                          # 0 bytes
+    (d / "dialogs-b.json").mkdir()                                 # a directory
+    (d / "dialogs-c.local.json").write_text('{"d": []}')           # local alone
+    (d / "dialogs-e.json").write_text("{}")                        # no dialog
+    datadir.freeze_root()
+    assert datadir.store_refusal() and not (d / datadir.MARKER).exists()
+    datadir.unfreeze_root()
+    (d / "dialogs-kernel.json").write_text('{"d": []}')
+    datadir.freeze_root()
+    assert datadir.store_refusal() is None and (d / datadir.MARKER).exists()
+
+
+def test_sf4_a_shadow_store_in_a_pointer_root_stays_refused(home, tmp_path):
+    shadow = tmp_path / "mountpoint"
+    shadow.mkdir()
+    (shadow / "dialogs-kernel.json").write_text('{"d": []}')
+    _write_pointer(home, shadow)
+    datadir.freeze_root()
+    assert datadir.store_refusal() and not (shadow / datadir.MARKER).exists()
+
+
+def test_sf5_serve_freezes_the_root_before_uvicorn_runs(tmp_path, monkeypatch):
+    import uvicorn
+
+    from dandelion import cli
+    seen = []
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: seen.append(datadir._FROZEN))
+    monkeypatch.setattr(cli, "_move_out_of_repo", lambda: True)
+    monkeypatch.delenv("DANDELION_RELOAD", raising=False)
+    monkeypatch.delenv("DANDELION_HOST", raising=False)
+    assert cli.cmd_serve([]) == 0
+    assert seen and seen[0] is not None and seen[0]["root"] == tmp_path
+
+
+def test_sf5_the_startup_hook_freezes_the_root(tmp_path, monkeypatch):
+    from dandelion import app
+    monkeypatch.setattr(app, "use_target", lambda name: None)
+    monkeypatch.setattr(app, "_initial_target", lambda: "kernel")
+    app.STATE.pop("_target_ready", None)
+    assert datadir._FROZEN is None
+    app._ensure_target()
+    assert datadir._FROZEN["root"] == tmp_path

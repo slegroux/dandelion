@@ -23,6 +23,9 @@ def _isolated_user_data(tmp_path, monkeypatch):
     monkeypatch.setenv("DANDELION_TOOLS", str(tmp_path / "tools.json"))
     from dandelion import datadir
     datadir.unfreeze_root()                      # serve freezes the root; tests look it up afresh
+    app = sys.modules.get("dandelion.app")
+    if app is not None:
+        app.STATE.pop("_target_ready", None)
     yield
     datadir.unfreeze_root()
 

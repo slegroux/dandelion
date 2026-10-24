@@ -54,17 +54,22 @@ def _pointer_file() -> Path:
     return config_dir() / "data-root"
 
 
+def _samefile(a: Path, b: Path) -> bool:
+    """Same file by device and inode, so case variants and links of a path match
+    (APFS is case-insensitive and resolve() keeps the case you typed)."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 def _dangerous(p: Path) -> bool:
     """Folders that must never be a data folder: /, $HOME, anything above the config
     dir (backup would tar it), and the repo (where `just sync` once pushed data)."""
-    def real(x: Path) -> Path:
-        try:
-            return x.resolve()
-        except (OSError, RuntimeError):
-            return x
-    r, cfg, repo = real(p), config_dir(), real(REPO_DATA.parent)
-    return (r in {Path(r.anchor), real(Path.home()), *cfg.parents, *real(cfg).parents}
-            or r == repo or repo in r.parents)
+    repo = REPO_DATA.parent
+    if p in config_dir().parents or any(_samefile(p, b) for b in (Path(p.anchor or "/"), Path.home(), *config_dir().parents)):
+        return True
+    return any(_samefile(q, repo) for q in (p, *p.parents))
 
 
 def _pointer_state() -> tuple[Path | None, str | None]:
@@ -207,9 +212,11 @@ def make_dirs(d: Path) -> None:
     """mkdir -p for a folder under the data root without ever creating a non-default
     root itself (a mount that vanished after check_writable must fail, not be recreated)."""
     root = data_root()
-    if _is_default(root) or root not in d.parents:
+    if _is_default(root) or (d != root and root not in d.parents):
         d.mkdir(parents=True, exist_ok=True)
         return
+    if d == root:
+        return                       # a non-default root must already be there
     cur = root
     for part in d.relative_to(root).parts:
         cur = cur / part
@@ -228,6 +235,17 @@ def claim_default_root() -> None:
         (root / MARKER).write_text("")
 
 
+def _has_store(root: Path) -> bool:
+    """A dialogs-<target>.json that reads as a store with at least one dialog: an
+    unmounted mountpoint is empty, and a stray empty or local-only file proves nothing."""
+    from .client import _parse_store
+    try:
+        return any(f.is_file() and not f.name.endswith(".local.json") and _parse_store(f)
+                   for f in root.glob("dialogs-*.json"))
+    except OSError:
+        return False
+
+
 def freeze_root() -> None:
     """Decide the data root and whether it is refused, once, for this process (called
     at serve start and when the backend is built). A root that already holds a
@@ -240,12 +258,14 @@ def freeze_root() -> None:
     claim_default_root()
     root, source, bad = _resolve()
     msg = _refusal(root, source, bad)
-    if msg and not bad and _marker_problem(root) == "missing":
+    # pointer roots get their marker from use_folder, never from this rule
+    if msg and not bad and _marker_problem(root) == "missing" \
+            and (source == "env" or (config_dir().is_symlink() and _same(root, config_dir()))) \
+            and _has_store(root):
         with contextlib.suppress(OSError):
-            if next(root.glob("dialogs-*.json"), None):
-                (root / MARKER).write_text("")
-                print(f"[dandelion] marked existing store at {root}", file=sys.stderr)
-                msg = None
+            (root / MARKER).write_text("")
+            print(f"[dandelion] marked existing store at {root}", file=sys.stderr)
+            msg = None
     _FROZEN = {"root": root, "source": source, "refusal": msg}
     if msg:
         print(f"[dandelion] WARNING: {msg}", file=sys.stderr)
@@ -272,6 +292,7 @@ def use_folder(path: str, confirm: bool = False) -> tuple[bool, str]:
     drive = ("Is your cloud drive running? An unmounted drive looks like an empty folder. "
              "If this really is the folder you mean, tick the confirmation and press the "
              "button again.")
+    old = data_root()
     try:
         if p.exists() and not p.is_dir():
             return False, f"{p} is not a folder."
@@ -292,8 +313,9 @@ def use_folder(path: str, confirm: bool = False) -> tuple[bool, str]:
     except OSError as e:
         return False, f"Could not use {p}: {e.strerror or e}"
     return True, (f"Saved. Dandelion will use {p} after you restart it. Nothing was moved or "
-                  "copied: to bring your dialogs along, run dandelion backup now and "
-                  "dandelion restore after the restart.")
+                  "copied: to bring your dialogs along, run "
+                  f"DANDELION_DATA='{old}' dandelion backup now (a plain dandelion backup would "
+                  "archive the new folder), then dandelion restore after the restart.")
 
 
 def _write_pointer(p: Path) -> None:
@@ -738,7 +760,7 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
             if dst.is_dir() or (dst.exists() and not force):
                 skipped.append(f"{m.name} ({'is a directory' if dst.is_dir() else 'exists'})")
                 continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
+            make_dirs(dst.parent)
             tmp = dst.with_name(dst.name + ".restore-tmp")
             try:
                 fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

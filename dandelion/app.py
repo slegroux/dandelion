@@ -2111,8 +2111,8 @@ def _data_folder_card(msg=None):
                       "an empty folder; this also covers a folder that already has other "
                       "files", fr="df_confirm"), cls="muted small"),
             Div("Applies after you restart Dandelion. It never moves or copies your existing "
-                "dialogs: to bring them along, run dandelion backup first and dandelion "
-                "restore after the restart.", cls="muted small"),
+                "dialogs: to bring them along, run dandelion backup first (with DANDELION_DATA "
+                "set to the folder shown above) and dandelion restore after the restart.", cls="muted small"),
             Button("Use this folder", cls="save-btn", type="submit", name="action",
                    value="use", disabled=env),
             Button("Back to the default", cls="save-btn", type="submit", name="action",

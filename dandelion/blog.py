@@ -267,7 +267,10 @@ def _load_manifest(dest: str) -> dict[str, str]:
 
 def _save_manifest(dest: str, manifest: dict[str, str]) -> None:
     import os
-    os.makedirs(dest, exist_ok=True)
+    from pathlib import Path
+
+    from .datadir import make_dirs
+    make_dirs(Path(dest))
     with open(_manifest_path(dest), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=1, sort_keys=True)
 

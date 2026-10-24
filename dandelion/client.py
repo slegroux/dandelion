@@ -234,7 +234,7 @@ def _maybe_snapshot(p: Path) -> None:
         return
     import shutil
     d = _snapshot_dir(p)
-    d.mkdir(parents=True, exist_ok=True)
+    _datadir.make_dirs(d)
     from datetime import datetime
     dst = d / f"{p.stem}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}.json"
     shutil.copy2(p, dst)

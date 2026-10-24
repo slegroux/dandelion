@@ -528,6 +528,7 @@ refuses to run while the app is up (stop it with `just stop` first).
 and press **Use this folder**; it applies after you restart. The choice is saved in
 `~/.config/dandelion/data-root`, and `DANDELION_DATA`, when set, overrides it.
 Nothing is moved or copied: to bring your dialogs along, run `just backup` before
+(with `DANDELION_DATA` set to the folder you use now, once the pointer is saved)
 and `just restore` after the restart. API keys and the Ask AI tool policy always
 stay in `~/.config/dandelion`, never in the data folder. A folder other than the
 default needs a `.dandelion-store` marker, which **Use this folder** writes; without
