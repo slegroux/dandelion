@@ -14,6 +14,7 @@ import hmac
 import html
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -22,6 +23,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
+import anyio.to_thread
 from fasthtml.common import *
 from starlette.datastructures import UploadFile
 
@@ -2842,6 +2844,21 @@ class _SessionScope:
             _CUR_SID.reset(token)
 
 
+def _oob_banner() -> bytes:
+    return to_xml(_ro_banner(oob=True)).encode() if datadir.store_refusal() else b""
+
+
+class _QuietLeasePoll(logging.Filter):
+    """Keep the every-30-s /lease/status poll out of uvicorn's access log."""
+
+    def filter(self, record):
+        args = record.args if isinstance(record.args, tuple) else ()
+        return not (len(args) > 2 and str(args[2]).startswith("/lease/status"))
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietLeasePoll())
+
+
 class _ReadOnlyBanner:
     """Pure-ASGI middleware: htmx swaps only part of the page, so a switch to
     read-only mid-session (another Mac took over, this Mac's hold lapsed, the
@@ -2869,8 +2886,9 @@ class _ReadOnlyBanner:
                 if message.get("more_body"):
                     return
                 body = b"".join(chunks)
-                if b'id="ro-banner"' not in body and datadir.store_refusal():
-                    body += to_xml(_ro_banner(oob=True)).encode()
+                if b'id="ro-banner"' not in body:
+                    # off the event loop: it stats the mount and may wait on the lease lock
+                    body += await anyio.to_thread.run_sync(_oob_banner)
                 headers = [(k, v) for k, v in held[0].get("headers", [])
                            if k.lower() != b"content-length"]
                 await send({**held[0], "headers": [*headers, (b"content-length",
@@ -2971,11 +2989,16 @@ def _leave_read_only(force: bool):
     before = (lambda: kept.append(backend.reload())) if hasattr(backend, "reload") else None
     with _client._SAVE_LOCK:
         try:
-            _, msg = datadir.take_lease(force=force, before=before)
+            ok, msg = datadir.take_lease(force=force, before=before)
         except (_client.StoreUnreadable, OSError) as e:      # still read-only
-            msg = f"Still read-only: could not reload the dialogs ({e})."
+            ok, msg = False, f"Still read-only: could not reload the dialogs ({e})."
+        if ok and kept and getattr(backend, "last_reload_kept", False):
+            backend._save()                  # the edits refused meanwhile, now saved
+            msg += " Nothing changed meanwhile, so your edits were kept and saved."
+        elif ok and kept:
+            msg += " Dialogs reloaded from disk."
     if kept and kept[0]:
-        msg += f" What this Mac had in memory is kept in {kept[0]} (on this Mac only)."
+        msg += f" Edits this Mac could not save are kept in {kept[0]} (on this Mac only)."
     set_cur("flash", msg)
     return RedirectResponse("/", status_code=303)
 

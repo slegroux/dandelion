@@ -8,6 +8,7 @@ Why a wrapper:
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import threading
@@ -232,10 +233,30 @@ def _wait_for_store(p: Path) -> None:
                               "or a deleted file); not starting from an empty store.")
 
 
+# What this process last read or wrote, per store key: (mtime_ns, size) of the
+# store and its local overlay, so a reload can tell whether anyone changed them.
+_STORE_SEEN: dict[str, tuple] = {}
+# Store keys with edits a refused save could not write (only those are worth
+# keeping in an unsaved-*.json when a reload drops them).
+_UNSAVED: set[str] = set()
+_UNSAVED_N = itertools.count()
+
+
+def _store_stat(key: str) -> tuple:
+    def one(p: Path):
+        try:
+            st = p.stat()
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
+    return one(_store_path(key)), one(_local_store_path(key))
+
+
 def _load_dialogs(key: str) -> dict[str, list[Msg]]:
     with _SAVE_LOCK:                   # a recovery moving the store aside is not "missing"
         _wait_for_store(_store_path(key))
         raw = _read_raw_dialogs(_store_path(key))
+        _STORE_SEEN[key] = _store_stat(key)
     raw.update(_read_raw_dialogs(_local_store_path(key)))  # local/private wins
     if not raw:
         return {}
@@ -312,7 +333,10 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
                 _write_dialog_store(local, private)
             elif local.exists():
                 local.unlink()
+            _STORE_SEEN[key] = _store_stat(key)
+            _UNSAVED.discard(key)
         except _datadir.StoreRefused as e:
+            _UNSAVED.add(key)
             _datadir.warn_refused(e)
         except OSError as e:           # never let a disk hiccup break the app,
             import sys                 # but don't hide it either
@@ -545,16 +569,26 @@ class _InMemoryBackend:
         if getattr(self, "_store_key", None):
             _save_dialogs(self._store_key, self._dialogs)
 
+    # whether the last reload() kept the dialogs in memory (see reload)
+    last_reload_kept = False
+
     def reload(self) -> Path | None:
         """Swap the dialogs in memory for the ones on disk (on leaving read-only:
-        another machine may have saved since these were loaded). What is dropped
-        is first kept in config_dir()/unsaved-<time>.json, on this machine only,
-        and that path is returned (None when nothing differed). Raises
+        another machine may have saved since these were loaded). When this Mac is
+        retaking its own lease (nobody took over) and the store is unchanged since
+        it last read or wrote it, the dialogs in memory are kept instead, so edits
+        refused meanwhile can still be saved (last_reload_kept). Edits that were
+        refused and are dropped are first kept in local_dir()/unsaved-*.json, on
+        this machine only, and that path is returned (else None). Raises
         StoreUnreadable rather than trade dialogs in memory for a missing store."""
         key = getattr(self, "_store_key", None)
         if not key:
             return None
         with _SAVE_LOCK:
+            self.last_reload_kept = _datadir.retaking_own_lease() \
+                and _STORE_SEEN.get(key) == _store_stat(key)
+            if self.last_reload_kept:
+                return None
             new = _load_dialogs(key)
             held = sum(1 for v in self._dialogs.values() if v)
             if not _store_path(key).exists() and sum(1 for v in new.values() if v) < held:
@@ -562,11 +596,13 @@ class _InMemoryBackend:
                                       "dialogs in memory.")
             old = {n: [asdict(m) for m in list(v)] for n, v in list(self._dialogs.items()) if v}
             saved = None
-            if old != {n: [asdict(m) for m in v] for n, v in new.items() if v}:
+            if key in _UNSAVED and old != {n: [asdict(m) for m in v] for n, v in new.items() if v}:
                 from datetime import datetime
-                saved = _datadir.config_dir() / f"unsaved-{datetime.now():%Y%m%d-%H%M%S}.json"
+                saved = _datadir.local_dir() / (f"unsaved-{datetime.now():%Y%m%d-%H%M%S}-"
+                                                f"{os.getpid()}-{next(_UNSAVED_N)}.json")
                 saved.parent.mkdir(parents=True, exist_ok=True)
                 saved.write_text(json.dumps(old, indent=2))
+            _UNSAVED.discard(key)
             self._dialogs = new
             self._undo.clear()
             return saved

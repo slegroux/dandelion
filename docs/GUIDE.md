@@ -557,9 +557,12 @@ here.* ("last seen" comes from the other Mac's clock.) You can read everything, 
 nothing you type is saved. Quit Dandelion on the first Mac, wait for the sync, and press
 **Check again**: once that Mac's lease is gone, or this Mac has watched it go unchanged
 for 5 minutes, this one takes over and reloads the dialogs from the folder, so it starts
-from what the first Mac saved. Whatever the read-only Mac held in memory is kept first
-in `~/.config/dandelion/unsaved-<time>.json` (on that Mac only, never backed up), and
-the message says so. A lease more than an hour old is taken at start without asking;
+from what the first Mac saved. Edits the read-only Mac could not save are kept first
+in an `unsaved-<time>-….json` file on that Mac only (in `~/.config/dandelion`, or in
+`~/Library/Application Support/dandelion` when that folder is a link into a cloud
+drive; never synced or backed up), and the message names it. If the first Mac
+crashed, **Check again** tells you when it can take over: once its lease has stayed
+unchanged for 5 minutes since this Mac first looked. A lease more than an hour old is taken at start without asking;
 the page then says *Took over the data folder from <Mac> (last seen …)*. **Take over**
 takes it straight away; use it only when the other Mac is not running Dandelion on
 this folder, since edits there that have not synced yet may be lost. Neither button
@@ -571,6 +574,10 @@ page, or within 30 s on a page left alone. A Mac that slept (or lost the folder)
 more than 4 minutes stops saving the moment it wakes, since the other Mac may have
 taken over meanwhile: it shows that its hold lapsed, and **Check again** (after about
 45 s, so the other Mac's changes can sync in) takes the folder back if nobody else did.
+If the folder did not change meanwhile, what you typed on waking is kept and saved;
+if it did, the dialogs are reloaded and your typing goes to the `unsaved-…` file. None
+of this applies to the default folder, `~/.config/dandelion`: it is never synced, so
+sleep never makes it read-only.
 Settings shows which Mac has the folder open. Each Mac sees the other's lease only
 after the sync, so this is a warning, not a lock: two Macs that start within one sync
 delay of each other can both think the folder is free.

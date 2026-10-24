@@ -123,7 +123,7 @@ def test_same_hostname_on_another_machine_is_another_machine(root):
 def test_a_lease_stamped_in_the_future_counts_as_live(root):
     _lease(root, ago_s=-3600)                                    # its clock is an hour ahead
     assert not datadir.acquire_lease()
-    assert "(last seen 0 min ago)" in datadir.lease_banner()
+    assert "(dated in the future: its clock is ahead)" in datadir.lease_banner()
 
 
 def test_a_lease_that_stopped_changing_is_taken_after_watching_it(root, clock):
@@ -330,7 +330,7 @@ def test_a_lapse_shows_who_took_over(root, clock):
     _lease(root, since_ago_s=0)                                  # Mac A took it while we slept
     clock.advance(datadir.LEASE_GRACE_S)
     ok, msg = datadir.take_lease()
-    assert not ok and msg == "Still in use by Mac A."
+    assert not ok and msg.startswith("Still in use by Mac A.")
     assert datadir.lease_banner().startswith("In use by Mac A")
 
 
@@ -443,6 +443,186 @@ def test_a_missing_store_at_reload_keeps_the_lease_and_the_dialogs(ui, root):
     bak.unlink()                                                 # no backups either: still not {}
     TestClient(app.app).post("/lease/take-over", data={"confirm": "on"})
     assert _on_disk(root)["machine"] == OTHER and [m.content for m in backend.messages("d")] == ["old"]
+
+
+# ---- after a re-review: sleep on one Mac, stalled writes, local files ------------
+def test_the_default_root_never_lapses(root, clock, monkeypatch):
+    cfg = datadir.config_dir()
+    cfg.mkdir(parents=True)
+    monkeypatch.setenv("DANDELION_DATA", str(cfg))
+    datadir.acquire_lease()
+    clock.advance(10 * 60)                                       # a night's sleep, one Mac
+    assert datadir.store_refusal() is None and datadir.lease_banner() is None
+    client._save_dialogs("kernel", {"d": [client.Msg(id="1", msg_type="note", content="on wake")]})
+    assert json.loads((cfg / "dialogs-kernel.json").read_text())["d"][0]["content"] == "on wake"
+    assert datadir._tick() and "another machine" not in datadir.lease_status()
+
+
+@pytest.fixture
+def awake(root, clock, monkeypatch):
+    """Mac B held a shared folder, slept past its lease, and typed on wake (refused)."""
+    from dandelion import app
+    _store(root, {"d": [("1", "old")]})
+    datadir.acquire_lease()
+    backend = client._InMemoryBackend("kernel")
+    monkeypatch.setitem(app.STATE, "backend", backend)
+    monkeypatch.setitem(app.STATE, "pending_stream", None)
+    clock.advance(datadir.LEASE_STALE_S)
+    backend.add("d", "typed on wake", "note")
+    assert _contents(root) == {"d": ["old"]}                     # refused: the hold lapsed
+    clock.advance(datadir.LEASE_GRACE_S)
+    return app, backend
+
+
+def test_waking_with_an_unchanged_store_keeps_and_saves_the_edits(awake, root):
+    app, backend = awake
+    page = TestClient(app.app).post("/lease/check").text
+    assert "your edits were kept and saved" in page
+    assert _contents(root) == {"d": ["old", "typed on wake"]}
+    assert not list(datadir.local_dir().glob("unsaved-*"))
+
+
+def test_waking_to_a_store_the_other_mac_changed_reloads_and_keeps_the_edits_aside(awake, root):
+    app, backend = awake
+    _store(root, {"d": [("1", "old"), ("2", "saved on Mac A")]})  # its save synced, its lease not
+    page = TestClient(app.app).post("/lease/check").text
+    assert "Dialogs reloaded from disk." in page
+    assert [m.content for m in backend.messages("d")] == ["old", "saved on Mac A"]
+    kept, = datadir.local_dir().glob("unsaved-*.json")
+    assert [m["content"] for m in json.loads(kept.read_text())["d"]] == ["old", "typed on wake"]
+    assert _contents(root) == {"d": ["old", "saved on Mac A"]}
+
+
+def test_a_heartbeat_write_that_stalls_past_the_fence_lapses(root, clock, monkeypatch):
+    before = _store(root, {"d": [("1", "B: work saved while A's write hung")]})
+    datadir.acquire_lease()
+    real = datadir._write_lease
+
+    def stalled(rec):
+        clock.advance(datadir.LEASE_STALE_S)                     # hung in the mount meanwhile
+        real(rec)
+    monkeypatch.setattr(datadir, "_write_lease", stalled)
+    assert not datadir._tick()
+    assert "lapsed" in datadir.store_refusal()
+    _save("A edit")
+    assert (root / "dialogs-kernel.json").read_bytes() == before
+    monkeypatch.setattr(datadir, "_write_lease", real)
+    assert not datadir._tick()                                   # never beats again
+
+
+def test_a_stalled_write_overtaken_by_a_take_over_shows_who(root, clock, monkeypatch):
+    datadir.acquire_lease()
+    real = datadir._write_lease
+
+    def stalled(rec):
+        real(rec)
+        clock.advance(datadir.LEASE_STALE_S)
+        _lease(root, since_ago_s=0)                              # Mac A's take-over lands after ours
+    monkeypatch.setattr(datadir, "_write_lease", stalled)
+    assert not datadir._tick()
+    assert datadir.lease_banner().startswith("In use by Mac A")
+    assert _on_disk(root)["machine"] == OTHER
+
+
+def test_the_banner_check_runs_off_the_event_loop(root, clock):
+    import asyncio
+    from dandelion import app
+    datadir.acquire_lease()
+    clock.advance(datadir.LEASE_STALE_S)                         # the check now needs _LEASE_LOCK
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with datadir._LEASE_LOCK:
+            held.set()
+            release.wait(10)
+    threading.Thread(target=hold, daemon=True).start()
+    held.wait(5)
+
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"text/html; charset=utf-8")]})
+        await send({"type": "http.response.body", "body": b"<div>x</div>"})
+    sent = []
+
+    async def send(m):
+        sent.append(m)
+
+    async def main():
+        task = asyncio.create_task(app._ReadOnlyBanner(inner)(
+            {"type": "http", "path": "/x", "headers": [(b"hx-request", b"true")]}, None, send))
+        t0 = time.monotonic()
+        await asyncio.sleep(0.2)                                 # the loop keeps running
+        assert time.monotonic() - t0 < 2 and not task.done()
+        release.set()
+        await asyncio.wait_for(task, 10)
+    asyncio.run(main())
+    assert b"lapsed" in sent[-1]["body"]
+
+
+def test_machine_local_files_never_go_to_a_linked_config_dir(root, tmp_path):
+    shared = tmp_path / "pcloud" / "dandelion"
+    shared.mkdir(parents=True)
+    cfg = datadir.config_dir()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.symlink_to(shared)                                       # an old ~/.config/pappus link
+    local = datadir.local_dir()
+    assert not local.resolve().is_relative_to(shared.resolve())
+    datadir._local_machine_id()
+    assert (local / "machine-id").is_file()
+    _store(root, {"d": [("1", "old")]})
+    backend = client._InMemoryBackend("kernel")
+    _lease(root)
+    datadir.acquire_lease()                                      # read-only
+    backend.add("d", "typed", "note")
+    kept = backend.reload()
+    assert kept.parent == local and list(shared.iterdir()) == []
+
+
+def test_unsaved_files_only_for_refused_edits_and_never_overwritten(ui, root):
+    app, backend = ui
+    assert backend.reload() is None                              # nothing typed: nothing kept
+    backend.add("d", "one", "note")
+    first = backend.reload()
+    backend.add("d", "two", "note")
+    second = backend.reload()
+    assert first != second and first.is_file() and second.is_file()
+
+
+def test_a_refused_reload_leaves_no_take_over_notice(root, clock):
+    _lease(root, ago_s=0)
+    assert not datadir.acquire_lease()
+    clock.advance(datadir.LEASE_STALE_S)                         # watched unchanged: may be taken
+
+    def refuse():
+        raise client.StoreUnreadable("store missing")
+    with pytest.raises(client.StoreUnreadable):
+        datadir.take_lease(before=refuse)
+    assert datadir.lease_notice() is None and datadir.lease_banner().startswith("In use by Mac A")
+
+
+def test_still_in_use_says_when_check_again_can_work(root):
+    _lease(root)
+    datadir.acquire_lease()
+    ok, msg = datadir.take_lease()
+    assert not ok and "If Mac A has quit or crashed, Check again works once its lease has " \
+        "stayed unchanged for 5 min (from " in msg and msg.endswith("or use Take over.")
+
+
+def test_the_heartbeat_is_kept_under_half_the_staleness(capsys):
+    assert datadir._heartbeat_for(60, 300) == 60
+    assert datadir._heartbeat_for(300, 300) == 75
+    assert "must be under half" in capsys.readouterr().err
+
+
+def test_the_status_poll_stays_out_of_the_access_log():
+    import logging
+    from dandelion import app
+
+    def rec(path):
+        return logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                                 ("127.0.0.1:5", "GET", path, "1.1", 200), None)
+    assert not app._QuietLeasePoll().filter(rec("/lease/status"))
+    assert app._QuietLeasePoll().filter(rec("/"))
 
 
 # ---- two real processes --------------------------------------------------------
