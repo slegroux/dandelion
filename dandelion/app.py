@@ -842,8 +842,8 @@ def _lib_menu(m):
     return _dropdown(label, form, title="Tag this cell into a library", menu_cls="ins-menu")
 
 
-def _ctx_buttons(m):
-    """Type / Insert / Copy / Export / Lib / Mute / Pin / Delete — in both rendered
+def _ctx_buttons(m, num=None):
+    """Type / Insert / Copy / Export / Lib / Mute / Above / Pin / Delete — in both rendered
     and edit modes. Code cells also get an Export toggle (`#| export`) and, when
     libraries exist, a Lib picker (`#| export <lib>:<module>`)."""
     mid = m.id
@@ -858,6 +858,16 @@ def _ctx_buttons(m):
         if lib_menu is not None:
             btns.append(lib_menu)
     copy_menu = _copy_menu(mid)
+    can_bulk = hasattr(STATE["backend"], "set_muted_above")
+    above_menu = [] if num is None or num <= 1 or not can_bulk else [_dropdown(
+        "Above ▾",
+        _stream_btn("Start fresh here", "/cell/mute-above", cls="ins-item",
+                    vals={"id": mid, "muted": "1"},
+                    title="Mute every cell above this one (pinned cells stay)"),
+        _stream_btn("Unmute all above", "/cell/mute-above", cls="ins-item",
+                    vals={"id": mid, "muted": "0"},
+                    title="Unmute every cell above this one (including ones you muted yourself)"),
+        title="Bulk mute or unmute the cells above this one", menu_cls="type-menu")]
     return [
         _type_menu(m),
         _insert_menu(mid),
@@ -865,6 +875,7 @@ def _ctx_buttons(m):
         _stream_btn("Muted" if m.muted else "In context", "/cell/mute",
                     cls="cell-btn ctx" + (" off" if m.muted else ""), vals={"id": mid},
                     title="Toggle whether this cell is sent to the AI as notebook context"),
+    ] + above_menu + [
         _stream_btn("Pinned" if m.pinned else "Pin", "/cell/pin",
                     cls="cell-btn pin" + (" on" if m.pinned else ""), vals={"id": mid},
                     title="Pin this cell so it stays in context even when older cells are trimmed"),
@@ -946,7 +957,7 @@ def _head(m, primary, num=None, show_actions=False):
     if m.msg_type == "code":
         bits.append(Span(m.id, cls="muted small cid"))
     bits.append(_tok_badge(m))
-    bits.append(Div(*primary, _link_btn(m), *_ctx_buttons(m),
+    bits.append(Div(*primary, _link_btn(m), *_ctx_buttons(m, num),
                     cls="cell-actions" + (" show" if show_actions else "")))
     return Div(*bits, cls="who")
 
@@ -3582,6 +3593,22 @@ def cell_mute(id: str):
     backend = STATE["backend"]
     if hasattr(backend, "set_muted"):
         backend.set_muted(cur("dialog"), id)
+    return Stream()
+
+
+@rt("/cell/mute-above", methods=["post"])
+def cell_mute_above(id: str, muted: int = 0):
+    """Mute (muted=1) or unmute (muted=0) every cell above this one in one save.
+    Muting also drops the dialog's Claude/Codex CLI sessions (a resume would still
+    hold the muted cells' history), keeping the Claude cost tally."""
+    backend = STATE["backend"]
+    if hasattr(backend, "set_muted_above"):
+        d = cur("dialog")
+        n = backend.set_muted_above(d, id, bool(muted))
+        if muted and n:
+            claude_cli.CLI_SESSIONS.pop(d, None)
+            codex_cli.drop(d)
+        set_cur("flash", f"{'Muted' if muted else 'Unmuted'} {n} cell{'' if n == 1 else 's'} above")
     return Stream()
 
 
