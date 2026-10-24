@@ -208,6 +208,10 @@ a.conv-dup{box-sizing:border-box}
   box-shadow:0 6px 18px rgba(0,0,0,.10)}
 .export-menu a{text-decoration:none;color:var(--ink);font-size:13px;padding:6px 10px;border-radius:7px;white-space:nowrap}
 .export-menu a:hover{background:var(--hover)}
+/* "Export folder…" is a button in a form, styled like the menu's links */
+.export-folder{margin:0;display:flex;flex-direction:column}
+.export-menu .export-link{background:none;border:0;cursor:pointer;font:inherit;text-align:left;color:var(--ink);font-size:13px;padding:6px 10px;border-radius:7px;white-space:nowrap}
+.export-menu .export-link:hover{background:var(--hover)}
 /* settings */
 .settings-page{min-height:100vh;background:var(--bg);overflow:auto}
 .settings-wrap{max-width:640px;margin:0 auto;padding:28px 22px 60px}

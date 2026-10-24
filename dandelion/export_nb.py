@@ -10,6 +10,13 @@ pip-installable package; here we render the dialog as a document.
 """
 from __future__ import annotations
 
+import base64
+import json
+import re
+from pathlib import Path
+
+from .export import slug
+
 
 def _lines(s: str) -> list:
     """nbformat wants source/text as a list of lines (keeping newlines)."""
@@ -58,19 +65,98 @@ def to_ipynb(msgs) -> dict:
                          "language_info": {"name": "python"}}}
 
 
-def to_markdown(msgs) -> str:
-    """Export cells to a single Markdown document."""
+def _inline_image(n: int, k: int, item: dict) -> str:
+    return f"![output](data:{item['type']};base64,{item['data']})"
+
+
+def to_markdown(msgs, image=_inline_image) -> str:
+    """Export cells to a single Markdown document. ``image(cell_number, k, item)``
+    renders the k-th image output of a cell (default: an inline ``data:`` URI)."""
     out = []
-    for m in msgs:
+    for n, m in enumerate(msgs, 1):
         if m.msg_type == "code":
             out.append(f"```python\n{m.content}\n```")
             if m.output:
                 out.append(f"```\n{m.output}\n```")
+            k = 0
             for item in m.rich:
                 if item.get("type", "").startswith("image/"):
-                    out.append(f"![output](data:{item['type']};base64,{item['data']})")
+                    k += 1
+                    out.append(image(n, k, item))
         elif m.msg_type == "note":
             out.append(m.content)
         else:
             out.append(_prompt_md(m))
     return "\n\n".join(out) + "\n"
+
+
+_IMAGE_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/svg+xml": "svg"}
+
+
+MARKER = "<!-- exported by Dandelion -->"
+_STALE = re.compile(r"cell-\d+-\d+\.\w+$")
+
+
+def _image_bytes(mime: str, data) -> bytes:
+    if mime == "image/svg+xml":                    # SVG is text, the others base64
+        from .blog import _sanitize                # untrusted input, as in the app view
+        if not isinstance(data, str):
+            raise TypeError("svg data is not text")
+        return _sanitize(data).encode("utf-8")
+    return base64.b64decode(data, validate=True)
+
+
+def export_folder(msgs, dest, name: str = "dialog") -> Path:
+    """Write ``<slug>.md`` (images saved under ``<slug>_files/`` and linked relatively)
+    and ``<slug>.ipynb`` into ``dest``, creating it if missing. Returns the .md path.
+
+    File names derive from the slug of ``name`` and fixed patterns, and every target
+    must resolve inside ``dest`` (symlinks that leave it are refused). An existing
+    ``<slug>.md``/``.ipynb`` (compared case-insensitively) is only overwritten when the
+    ``.md`` carries MARKER, i.e. an earlier export wrote it; otherwise ValueError.
+    Images with undecodable data are skipped with a placeholder. Everything is built
+    in memory first, so a refusal or bad data never leaves a partial folder."""
+    stem = slug(name)
+    dest = Path(dest)
+    files: dict[str, bytes] = {}
+
+    def write_image(n: int, k: int, item: dict) -> str:
+        ext = _IMAGE_EXT.get(item["type"])
+        try:
+            if not ext:
+                raise ValueError("unsupported image type")
+            data = _image_bytes(item["type"], item.get("data", ""))
+        except (ValueError, TypeError):
+            return "*[image not exported]*"
+        fname = f"cell-{n}-{k}.{ext}"
+        files[fname] = data
+        return f"![output]({stem}_files/{fname})"
+
+    md = MARKER + "\n" + to_markdown(msgs, write_image)
+    nb = json.dumps(to_ipynb(msgs), indent=1)
+
+    root = dest.resolve()
+    existing = {p.name.lower(): p for p in root.iterdir()} if root.is_dir() else {}
+    old_md = existing.get(f"{stem}.md")
+    ours = old_md is not None and old_md.read_text(errors="replace").startswith(MARKER)
+    if not ours and (old_md or f"{stem}.ipynb" in existing):
+        raise ValueError(f"{(old_md or existing[f'{stem}.ipynb'])} already exists "
+                         "and was not written by a Dandelion export — choose another folder")
+    files_dir = root / f"{stem}_files"
+    for target in (root / f"{stem}.md", root / f"{stem}.ipynb", files_dir):
+        if not target.resolve().is_relative_to(root):
+            raise ValueError(f"{target} resolves outside the export folder")
+
+    root.mkdir(parents=True, exist_ok=True)
+    if files:
+        files_dir.mkdir(exist_ok=True)
+    if files_dir.is_dir():
+        for old in files_dir.iterdir():
+            if _STALE.match(old.name) and old.name not in files:
+                old.unlink()
+    for fname, data in files.items():
+        (files_dir / fname).write_bytes(data)
+    (root / f"{stem}.ipynb").write_text(nb, encoding="utf-8")
+    md_path = root / f"{stem}.md"
+    md_path.write_text(md, encoding="utf-8")
+    return md_path

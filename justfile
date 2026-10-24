@@ -77,12 +77,13 @@ start reload="":
     fi
     echo "▶ web UI → http://localhost:{{ui_port}}  (logs: $LOG/ui.log)"
     nohup env $RELOAD_ENV DANDELION_ALLOWED_HOSTS="{{tailnet_host}}" DANDELION_TRUST_TAILNET="{{trust_tailnet}}" DANDELION_TARGET=kernel DANDELION_PORT={{ui_port}} uv run {{run_extras}} python -m dandelion.cli serve >"$LOG/ui.log" 2>&1 &
-    for i in $(seq 1 60); do up {{ui_port}} && break; sleep 0.5; done
+    UIPID=$!
+    for i in $(seq 1 60); do up {{ui_port}} && break; kill -0 $UIPID 2>/dev/null || break; sleep 0.5; done
     if up {{ui_port}}; then
         echo "✓ running in the background → http://localhost:{{ui_port}}   (stop with: just stop)"
         open "http://localhost:{{ui_port}}" || true
     else
-        echo "✗ UI didn't come up — check $LOG/ui.log"; exit 1
+        echo "✗ UI didn't come up — last lines of $LOG/ui.log:"; tail -n 5 "$LOG/ui.log"; exit 1
     fi
 
 # Start the kernel server (backend) + the web UI together; Ctrl+C stops both.

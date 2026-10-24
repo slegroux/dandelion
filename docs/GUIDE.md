@@ -284,6 +284,11 @@ uv run python -m dandelion.cli doctor h100
 uv run python -m dandelion.cli serve        # http://localhost:8000
 ```
 
+One server per data folder: `serve` refuses to start while another Dandelion
+server uses the same `DANDELION_DATA`, because two would overwrite each other's
+dialogs. For a second server, give it its own folder and port, e.g.
+`DANDELION_DATA=/tmp/dandelion-test DANDELION_PORT=8002 uv run python -m dandelion.cli serve`.
+
 In the UI, the top-right dropdown flips between `local` and `h100`. A green LED =
 live server; amber = running on the mock (with a banner telling you why).
 
@@ -492,6 +497,16 @@ Code cells render **plots and rich values inline**, not just text: matplotlib
 figures are captured as images, and anything implementing the notebook display
 protocol (`_repr_html_` for DataFrames, `_repr_png_` for images) renders too. A
 trailing `;` suppresses the last expression's value, Jupyter-style.
+
+#### Export a dialog as a folder
+
+The download menu's **Export folder…** opens the macOS folder picker (only when you
+use Dandelion on the Mac it runs on) and writes `<dialog>.md`, `<dialog>.ipynb`
+and a `<dialog>_files/` folder holding every plot (`.png`, `.jpg`, `.svg`), linked
+relatively from the Markdown, so the folder renders with its images on GitHub.
+It starts the `.md` with an `<!-- exported by Dandelion -->` marker and refuses to overwrite a
+same-named file that lacks it (re-exporting the same dialog is fine).
+The plain **Markdown (.md)** download still embeds images inline.
 
 ## Your work is saved
 
