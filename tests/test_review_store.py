@@ -135,7 +135,7 @@ def test_restore_refused_while_app_running(tmp_path, monkeypatch, capsys):
 
 def test_mark_serving_records_own_pid_which_restore_ignores(tmp_path):
     datadir.claim_serving()
-    assert (tmp_path / ".serve.pid").read_text() == str(os.getpid())
+    assert (tmp_path / ".serve.pid").read_text().split()[0] == str(os.getpid())
     assert datadir.running_server_pid() is None                # it's us, not another app
 
 

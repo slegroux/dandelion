@@ -8,6 +8,7 @@ Why a wrapper:
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import threading
@@ -141,6 +142,10 @@ def _recover_store(p: Path) -> dict:
     v = _parse_store(p) if p.exists() else {}
     if v is not None:
         return v                       # another thread already recovered it
+    try:
+        _datadir.check_writable(p)     # never repair a store in a folder we may not write
+    except _datadir.StoreRefused as e:
+        raise StoreUnreadable(f"{p} is unreadable and is left as it is: {e}") from e
     from datetime import datetime
     aside = p.with_name(f"{p.name}.corrupt-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}")
     try:
@@ -207,8 +212,51 @@ def _write_private_dialogs(key: str, names: set[str]) -> None:
         pass                           # never let a disk hiccup break the toggle
 
 
+# On a synced folder a reader can see the store missing for a moment while another
+# machine's save replaces it: look again this many times, this far apart.
+STORE_RETRIES = 3
+STORE_RETRY_S = float(os.environ.get("DANDELION_STORE_RETRY_S", "1"))
+
+
+def _wait_for_store(p: Path) -> None:
+    """Never start empty when the folder plainly held a store: on a non-default
+    (possibly synced) root, a missing store is looked for again, and if it is
+    still missing while its .bak or snapshots are there, loading is refused."""
+    if p.exists() or _datadir._is_default(p.parent) \
+            or not (p.with_suffix(f"{p.suffix}.bak").exists() or _snapshots(p)):
+        return                         # there, never synced, or a new store
+    for _ in range(STORE_RETRIES):
+        time.sleep(STORE_RETRY_S)
+        if p.exists():
+            return
+    raise StoreUnreadable(f"{p} is missing, but its backups are there (a sync in progress, "
+                              "or a deleted file); not starting from an empty store.")
+
+
+# What this process last read or wrote, per store key: (mtime_ns, size) of the
+# store and its local overlay, so a reload can tell whether anyone changed them.
+_STORE_SEEN: dict[str, tuple] = {}
+# Store keys with edits a refused save could not write (only those are worth
+# keeping in an unsaved-*.json when a reload drops them).
+_UNSAVED: set[str] = set()
+_UNSAVED_N = itertools.count()
+
+
+def _store_stat(key: str) -> tuple:
+    def one(p: Path):
+        try:
+            st = p.stat()
+        except OSError:
+            return None
+        return st.st_mtime_ns, st.st_size
+    return one(_store_path(key)), one(_local_store_path(key))
+
+
 def _load_dialogs(key: str) -> dict[str, list[Msg]]:
-    raw = _read_raw_dialogs(_store_path(key))
+    with _SAVE_LOCK:                   # a recovery moving the store aside is not "missing"
+        _wait_for_store(_store_path(key))
+        raw = _read_raw_dialogs(_store_path(key))
+        _STORE_SEEN[key] = _store_stat(key)
     raw.update(_read_raw_dialogs(_local_store_path(key)))  # local/private wins
     if not raw:
         return {}
@@ -285,7 +333,10 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
                 _write_dialog_store(local, private)
             elif local.exists():
                 local.unlink()
+            _STORE_SEEN[key] = _store_stat(key)
+            _UNSAVED.discard(key)
         except _datadir.StoreRefused as e:
+            _UNSAVED.add(key)
             _datadir.warn_refused(e)
         except OSError as e:           # never let a disk hiccup break the app,
             import sys                 # but don't hide it either
@@ -517,6 +568,44 @@ class _InMemoryBackend:
     def _save(self) -> None:
         if getattr(self, "_store_key", None):
             _save_dialogs(self._store_key, self._dialogs)
+
+    # whether the last reload() kept the dialogs in memory (see reload)
+    last_reload_kept = False
+
+    def reload(self) -> Path | None:
+        """Swap the dialogs in memory for the ones on disk (on leaving read-only:
+        another machine may have saved since these were loaded). When this Mac is
+        retaking its own lease (nobody took over) and the store is unchanged since
+        it last read or wrote it, the dialogs in memory are kept instead, so edits
+        refused meanwhile can still be saved (last_reload_kept). Edits that were
+        refused and are dropped are first kept in local_dir()/unsaved-*.json, on
+        this machine only, and that path is returned (else None). Raises
+        StoreUnreadable rather than trade dialogs in memory for a missing store."""
+        key = getattr(self, "_store_key", None)
+        if not key:
+            return None
+        with _SAVE_LOCK:
+            self.last_reload_kept = _datadir.retaking_own_lease() \
+                and _STORE_SEEN.get(key) == _store_stat(key)
+            if self.last_reload_kept:
+                return None
+            new = _load_dialogs(key)
+            held = sum(1 for v in self._dialogs.values() if v)
+            if not _store_path(key).exists() and sum(1 for v in new.values() if v) < held:
+                raise StoreUnreadable(f"{_store_path(key)} is missing; keeping the {held} "
+                                      "dialogs in memory.")
+            old = {n: [asdict(m) for m in list(v)] for n, v in list(self._dialogs.items()) if v}
+            saved = None
+            if key in _UNSAVED and old != {n: [asdict(m) for m in v] for n, v in new.items() if v}:
+                from datetime import datetime
+                saved = _datadir.local_dir() / (f"unsaved-{datetime.now():%Y%m%d-%H%M%S}-"
+                                                f"{os.getpid()}-{next(_UNSAVED_N)}.json")
+                saved.parent.mkdir(parents=True, exist_ok=True)
+                saved.write_text(json.dumps(old, indent=2))
+            _UNSAVED.discard(key)
+            self._dialogs = new
+            self._undo.clear()
+            return saved
 
     def list_dialogs(self) -> list[str]:
         return list(self._dialogs)

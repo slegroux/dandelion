@@ -14,6 +14,7 @@ import hmac
 import html
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -22,6 +23,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
+import anyio.to_thread
 from fasthtml.common import *
 from starlette.datastructures import UploadFile
 
@@ -501,6 +503,7 @@ def _ensure_target() -> None:
         return
     STATE["_target_ready"] = True
     datadir.freeze_root()                    # the data folder is fixed until restart
+    datadir.acquire_lease()                  # done already by serve, except in a reload worker
     use_target(_initial_target())
 
 
@@ -2112,6 +2115,7 @@ def _data_folder_card(msg=None):
         (Div(f"Pending: {pending}. It applies after you restart Dandelion; until then "
              f"{root} stays in use.", cls="muted small") if pending else ""),
         (Div("⚠ ", refused, cls="banner") if refused else ""),
+        (Div(lease, cls="muted small") if (lease := datadir.lease_status()) and not refused else ""),
         (Div(msg[1], cls="saved" if msg[0] else "banner") if msg else ""),
         Form(
             Input(type="text", name="path", placeholder="/absolute/path/to/folder",
@@ -2479,13 +2483,39 @@ PAPER_JS = """
 """
 
 
+def _lease_banner():
+    """Read-only because of the lease: why, and the two ways out."""
+    text = datadir.lease_banner()
+    if not text:
+        return None
+    return Div(
+        "⚠ ", text,
+        Form(Button("Check again", type="submit"),
+             method="post", action="/lease/check", style="display:inline;margin-left:10px"),
+        Form(Input(type="checkbox", name="confirm", id="lease_confirm"),
+             Label(" ", datadir.lease_takeover_warning(), fr="lease_confirm"),
+             Button("Take over", type="submit"),
+             method="post", action="/lease/take-over", style="display:inline;margin-left:10px"),
+        cls="banner", id="lease-banner")
+
+
+def _ro_banner(oob: bool = False):
+    """Why nothing is saved (a refused folder, the lease), or an empty slot. It
+    polls /lease/status so an idle page notices a switch to read-only, and
+    _ReadOnlyBanner adds it out-of-band to htmx partials, which never re-render it."""
+    lease = _lease_banner()
+    root = datadir.store_refusal() if not lease else datadir._root_refusal()
+    return Div(*([Div("⚠ ", root, cls="banner")] if root else []), *([lease] if lease else []),
+               id="ro-banner", hx_get="/lease/status", hx_trigger="every 30s",
+               hx_swap="outerHTML", **({"hx_swap_oob": "true"} if oob else {}))
+
+
 def Page():
     banner = (Div("⚠ ", STATE["warning"], " — showing a mock so you can still explore the UI.",
                   cls="banner") if STATE["warning"] else None)
     from . import client as _client              # a recovered (corrupt) dialog store
-    refused = datadir.store_refusal()
-    store_notes = [Div("⚠ ", n, cls="banner") for n in
-                   [*([refused] if refused else []), *_client.STORE_NOTICES]]
+    store_notes = [_ro_banner(), *(Div("⚠ ", n, cls="banner") for n in
+                   [*filter(None, [datadir.lease_notice()]), *_client.STORE_NOTICES])]
     return Html(
         # *app.hdrs carries htmx (+ fasthtml.js): without it the per-cell
         # hx-post buttons render but do nothing, since we return a full Html
@@ -2814,6 +2844,63 @@ class _SessionScope:
             _CUR_SID.reset(token)
 
 
+def _oob_banner() -> bytes:
+    return to_xml(_ro_banner(oob=True)).encode() if datadir.store_refusal() else b""
+
+
+class _QuietLeasePoll(logging.Filter):
+    """Keep the every-30-s /lease/status poll out of uvicorn's access log."""
+
+    def filter(self, record):
+        args = record.args if isinstance(record.args, tuple) else ()
+        return not (len(args) > 2 and str(args[2]).startswith("/lease/status"))
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietLeasePoll())
+
+
+class _ReadOnlyBanner:
+    """Pure-ASGI middleware: htmx swaps only part of the page, so a switch to
+    read-only mid-session (another Mac took over, this Mac's hold lapsed, the
+    folder went away) would never show and edits would look saved. Every htmx
+    HTML response carries the banner out-of-band while anything is refused."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("path") == "/lease/status" \
+                or not any(k == b"hx-request" for k, _ in scope.get("headers", [])):
+            await self.app(scope, receive, send)
+            return
+        held, chunks = [], []
+
+        async def _send(message):
+            if message["type"] == "http.response.start":
+                ctype = dict(message.get("headers", [])).get(b"content-type", b"")
+                if ctype.startswith(b"text/html"):
+                    held.append(message)             # hold it until the body is known
+                    return
+            elif message["type"] == "http.response.body" and held:
+                chunks.append(message.get("body", b""))
+                if message.get("more_body"):
+                    return
+                body = b"".join(chunks)
+                if b'id="ro-banner"' not in body:
+                    # off the event loop: it stats the mount and may wait on the lease lock
+                    body += await anyio.to_thread.run_sync(_oob_banner)
+                headers = [(k, v) for k, v in held[0].get("headers", [])
+                           if k.lower() != b"content-length"]
+                await send({**held[0], "headers": [*headers, (b"content-length",
+                                                               str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+            await send(message)
+
+        await self.app(scope, receive, _send)
+
+
+app.add_middleware(_ReadOnlyBanner)
 app.add_middleware(_LocalGuard)
 app.add_middleware(_SessionScope)
 
@@ -2886,6 +2973,53 @@ def settings_data_folder(action: str = "use", path: str = "", confirm: str = "")
     if action == "clear":
         return SettingsPage(data_msg=datadir.clear_pointer())
     return SettingsPage(data_msg=datadir.use_folder(path, confirm=bool(confirm)))
+
+
+def _leave_read_only(force: bool):
+    """'Check again' / 'Take over': under the save lock, so no save slips in
+    between; the dialogs are reloaded from disk before the first save, and the
+    ones dropped from memory are kept in a local file."""
+    from starlette.responses import RedirectResponse
+    from . import client as _client
+    if STATE.get("pending_stream"):
+        set_cur("flash", "An AI answer is still coming in; press it again once it has finished "
+                         "(reloading the dialogs now would lose it).")
+        return RedirectResponse("/", status_code=303)
+    backend, kept = STATE["backend"], []
+    before = (lambda: kept.append(backend.reload())) if hasattr(backend, "reload") else None
+    with _client._SAVE_LOCK:
+        try:
+            ok, msg = datadir.take_lease(force=force, before=before)
+        except (_client.StoreUnreadable, OSError) as e:      # still read-only
+            ok, msg = False, f"Still read-only: could not reload the dialogs ({e})."
+        if ok and kept and getattr(backend, "last_reload_kept", False):
+            backend._save()                  # the edits refused meanwhile, now saved
+            msg += " Nothing changed meanwhile, so your edits were kept and saved."
+        elif ok and kept:
+            msg += " Dialogs reloaded from disk."
+    if kept and kept[0]:
+        msg += f" Edits this Mac could not save are kept in {kept[0]} (on this Mac only)."
+    set_cur("flash", msg)
+    return RedirectResponse("/", status_code=303)
+
+
+@rt("/lease/status", methods=["get"])
+def lease_status():
+    return _ro_banner()
+
+
+@rt("/lease/check", methods=["post"])
+def lease_check():
+    return _leave_read_only(force=False)
+
+
+@rt("/lease/take-over", methods=["post"])
+def lease_take_over(confirm: str = ""):
+    if not confirm:
+        from starlette.responses import RedirectResponse
+        set_cur("flash", datadir.lease_takeover_warning() + " Tick the box to confirm.")
+        return RedirectResponse("/", status_code=303)
+    return _leave_read_only(force=True)
 
 
 @rt("/libraries", methods=["get"])
