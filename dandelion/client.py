@@ -8,12 +8,13 @@ Why a wrapper:
 """
 from __future__ import annotations
 
-import itertools
-import json
 import contextlib
 import hashlib
+import itertools
+import json
 import os
 import re
+import sys
 import threading
 import time
 import urllib.error
@@ -105,11 +106,15 @@ class StoreUnreadable(RuntimeError):
 
 
 def _in_dialog_dir(p: Path) -> bool:
-    return p.parent.name.endswith(".d")
+    return p.parent.name.startswith("dialogs-") and p.parent.name.endswith(".d")
 
 
 def _snapshot_dir(p: Path) -> Path:
-    return (p.parent.parent if _in_dialog_dir(p) else p.parent) / "backups"
+    if _in_dialog_dir(p):
+        if p.parent.name.endswith(".local.d"):
+            return _datadir.local_dir() / "backups"   # private text never goes to the synced root
+        return p.parent.parent / "backups"
+    return p.parent / "backups"
 
 
 def _snap_stem(p: Path) -> str:
@@ -180,12 +185,15 @@ def _recover_store(p: Path, parse=_parse_store, leave_out=False) -> dict | None:
             break
     else:
         good = None if leave_out else {}
+        bak = p.with_suffix(f"{p.suffix}.bak")
+        if leave_out and bak.exists():             # a damaged .bak must not look like a vanished file
+            with contextlib.suppress(OSError):
+                bak.replace(bak.with_name(f"{bak.name}.corrupt-{aside.name.rsplit('.corrupt-', 1)[1]}"))
         msg = (f"{p.name} was unreadable and no good backup was found; "
                f"{'left out' if leave_out else 'starting empty'}. "
                f"The damaged file is kept as {aside.name}.")
     STORE_NOTICES.append(msg)
     _dbg(msg)
-    import sys
     print(f"[dandelion] WARNING: {msg}", file=sys.stderr)
     return good
 
@@ -239,18 +247,22 @@ def _dir_of(p: Path) -> Path:
 
 
 def _store_there(p: Path) -> bool:
-    return p.exists() or _dir_of(p).is_dir()
+    d = _dir_of(p)
+    return p.exists() or (d.is_dir() and any(d.glob("*~*.json")))
 
 
 def _store_gone(p: Path) -> bool:
     """The store looks to have been there but is not: a dialog's .bak without its
-    file, or a missing store (file or folder) beside its backups. A new store has
-    none of those."""
+    file, or a missing (or emptied) store beside its backups. A new store has none
+    of those."""
     d = _dir_of(p)
     if d.is_dir():
         try:
-            return any(not b.with_suffix("").exists() for b in d.glob("*.json.bak")
-                       if b.name != f"{_INDEX}.bak")
+            if any(not b.with_suffix("").exists() and not any(d.glob(f"{b.stem}.corrupt-*"))
+                   for b in d.glob("*.json.bak") if b.name != f"{_INDEX}.bak"):
+                return True
+            if any(d.glob("*~*.json")) or _read_index(d) == []:
+                return False           # has dialogs, or was emptied on purpose
         except OSError:
             return False
     if p.exists():
@@ -295,8 +307,12 @@ def _store_stat(key: str) -> tuple:
 
     def folder(d: Path):
         try:
-            return tuple(sorted((f.name, *one(f)) for f in d.iterdir()
-                                if f.name.endswith(".json") and one(f)))
+            out = []
+            for f in d.iterdir():
+                st = one(f) if f.name.endswith(".json") else None
+                if st:
+                    out.append((f.name, *st))
+            return tuple(sorted(out))
         except OSError:
             return None
     return (folder(_dir_path(key)), one(_store_path(key)),
@@ -311,7 +327,7 @@ def _store_stat(key: str) -> tuple:
 # is inside. _index.json keeps the dialogs' order; if it is lost, the files are
 # ordered by modification time. Dialogs kept local-only go in dialogs-<key>.local.d.
 _INDEX = "_index.json"
-_DIALOG_FILE = re.compile(r".+~[0-9a-f]{8}\.json")
+_DIALOG_FILE = re.compile(r".*~[0-9a-f]{8}\.json")
 # per folder: each dialog's digest as last read or written (a save writes only the
 # dialogs whose digest changed), and the order last read or written
 _DIGESTS: dict[str, dict[str, str]] = {}
@@ -356,7 +372,6 @@ def _note(msg: str) -> None:
     if msg not in STORE_NOTICES:
         STORE_NOTICES.append(msg)
         _dbg(msg)
-        import sys
         print(f"[dandelion] WARNING: {msg}", file=sys.stderr)
 
 
@@ -422,47 +437,124 @@ def _aside(p: Path, suffix: str) -> Path:
     return q
 
 
-def _save_dir(key: str, local: bool, part: dict[str, list]) -> None:
+def _same_content(a: Path, b: Path) -> bool:
+    try:
+        if a.is_dir() != b.is_dir():
+            return False
+        if a.is_dir():
+            return {f.name: f.read_bytes() for f in a.iterdir() if f.is_file()} == \
+                {f.name: f.read_bytes() for f in b.iterdir() if f.is_file()}
+        return a.read_bytes() == b.read_bytes()
+    except OSError:
+        return False
+
+
+def _move_aside(p: Path, suffix: str) -> None:
+    """Keep `p` as <name><suffix> (numbered if taken); an identical copy already
+    there means nothing new is kept, so repeated switches don't pile up copies."""
+    q = p.with_name(p.name + suffix)
+    if q.exists() and _same_content(p, q):
+        if p.is_dir():
+            import shutil
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+        return
+    p.replace(_aside(p, suffix))
+
+
+# (key, local) whose old single file turned up next to its folder and was merged
+_MERGED: set[tuple[str, bool]] = set()
+
+
+def _write_dir(key: str, local: bool, part: dict[str, list]) -> None:
     """Write the dialogs of `part` (name -> raw messages) that changed since they
-    were last read or written, drop the files of dialogs that are gone, and keep
-    the order. A store still in the single-file layout is imported by the first
-    save: the old file is kept as <name>.pre-split."""
+    were last read or written, and keep the order. A store still in the single-file
+    layout is imported by building the folder beside it and renaming it into place,
+    then the old file is kept as <name>.pre-split: an interrupted import leaves the
+    old file as it was."""
     d, legacy = _dir_path(key, local), _legacy_path(key, local)
     fresh = not d.is_dir()
-    if fresh and not part:
+    if fresh and not part and (local or not legacy.exists()):
         if local and legacy.exists():            # nothing private any more
-            legacy.replace(_aside(legacy, ".pre-split"))
+            _move_aside(legacy, ".pre-split")
         return
+    w, dig = d, _DIGESTS.setdefault(str(d), {})
     if fresh:
-        _datadir.make_dirs(d)
-        _DIGESTS.pop(str(d), None)
-        _ORDER_SEEN.pop(str(d), None)
-    dig = _DIGESTS.setdefault(str(d), {})
+        import shutil
+        for stale in d.parent.glob(f"{d.name}.tmp-*"):
+            shutil.rmtree(stale, ignore_errors=True)    # an interrupted import
+        w, dig = d.with_name(f"{d.name}.tmp-{os.getpid()}"), {}
+        _datadir.make_dirs(w)
     for name, raw in part.items():
         body = _dialog_body(name, raw)
-        f = _dialog_file(d, name)
+        f = _dialog_file(w, name)
         if dig.get(name) != _digest(body) or not f.exists():
             _write_dialog_store(f, body)
             dig[name] = _digest(body)
-    for name in [n for n in dig if n not in part]:
-        f = _dialog_file(d, name)
-        _maybe_snapshot(f, force=True)           # a deleted dialog stays recoverable
-        f.unlink(missing_ok=True)
-        f.with_suffix(".json.bak").unlink(missing_ok=True)
-        del dig[name]
     order = list(part)
     if part or not local:
-        if _ORDER_SEEN.get(str(d)) != order or not (d / _INDEX).exists():
-            _write_dialog_store(d / _INDEX, {"order": order})
+        if fresh or _ORDER_SEEN.get(str(d)) != order or not (d / _INDEX).exists():
+            _write_dialog_store(w / _INDEX, {"order": order})
             _ORDER_SEEN[str(d)] = order
-    else:                                        # leave no trace of an empty local folder
+    if fresh:
+        w.replace(d)
+        _DIGESTS[str(d)] = dig
+        if legacy.exists():
+            _move_aside(legacy, ".pre-split")
+
+
+def _prune_dir(key: str, local: bool, part: dict[str, list], elsewhere: set[str]) -> None:
+    """Drop the files of dialogs that are gone from `part`, after everything else
+    was written. A deleted or renamed dialog gets a last snapshot; one that only
+    moved to the other side (`elsewhere`) keeps no copy here, backups included."""
+    d = _dir_path(key, local)
+    dig = _DIGESTS.get(str(d))
+    if dig is None or not d.is_dir():
+        return
+    for name in [n for n in dig if n not in part]:
+        f = _dialog_file(d, name)
+        if name in elsewhere:
+            for snap in _snapshots(f):
+                snap.unlink(missing_ok=True)
+        else:
+            _maybe_snapshot(f, force=True)       # a deleted dialog stays recoverable
+        f.with_suffix(".json.bak").unlink(missing_ok=True)   # the .bak first: no orphan if cut short
+        f.unlink(missing_ok=True)
+        del dig[name]
+    _prune_orphan_snapshots(d, part)
+    if local and not part:                       # leave no trace of an empty local folder
         for f in (d / _INDEX, d / f"{_INDEX}.bak"):
             f.unlink(missing_ok=True)
         _ORDER_SEEN.pop(str(d), None)
         with contextlib.suppress(OSError):
             d.rmdir()
-    if fresh and legacy.exists():
-        legacy.replace(_aside(legacy, ".pre-split"))
+
+
+def _prune_orphan_snapshots(d: Path, live: dict) -> None:
+    """Snapshots of dialogs that no longer exist stop being written, so the
+    per-file pruning never reaches them: keep the newest SNAPSHOT_KEEP of them."""
+    sd = _snapshot_dir(d / "x.json")
+    if SNAPSHOT_KEEP <= 0 or not sd.is_dir():
+        return
+    stems = {_dialog_file(d, n).stem for n in live} | {Path(_INDEX).stem}
+    pat = re.compile(re.escape(f"{d.name}__") + r"(.+)-(\d{8}-\d{6}-\d{6})\.json")
+    orphans = []
+    for f in sd.iterdir():
+        m = pat.fullmatch(f.name)
+        if m and m.group(1) not in stems:
+            orphans.append((m.group(2), f))
+    for _, f in sorted(orphans, reverse=True)[SNAPSHOT_KEEP:]:
+        f.unlink(missing_ok=True)
+
+
+def _settle_merged(key: str) -> None:
+    for local in (False, True):
+        if (key, local) in _MERGED:
+            legacy = _legacy_path(key, local)
+            if legacy.exists():
+                _move_aside(legacy, ".merged")
+            _MERGED.discard((key, local))
 
 
 def split_store(key: str) -> bool:
@@ -476,7 +568,7 @@ def split_store(key: str) -> bool:
             if not _dir_path(key, local).is_dir() and _legacy_path(key, local).is_file():
                 raw = _read_raw_dialogs(_legacy_path(key, local))
                 _datadir.make_dirs(p.parent)
-                _save_dir(key, local, raw)
+                _write_dir(key, local, raw)
                 did = True
         return did
 
@@ -496,7 +588,7 @@ def join_store(key: str) -> bool:
                 raise StoreUnreadable(f"{legacy.name} exists next to {d.name}; "
                                       "move one of them away first.")
             _write_dialog_store(legacy, _read_dir(d))
-            d.replace(_aside(d, ".pre-join"))
+            _move_aside(d, ".pre-join")
             _DIGESTS.pop(str(d), None)
             _ORDER_SEEN.pop(str(d), None)
             did = True
@@ -516,6 +608,26 @@ def store_keys() -> list[str]:
     return sorted(keys)
 
 
+def _merge_old_file(key: str, local: bool, got: dict, others: dict) -> set[str]:
+    """The old single file next to its folder (an old backup restored, an older
+    Dandelion saving here): its dialogs the folder lacks are added, and it is set
+    aside by the next save."""
+    d, legacy = _dir_path(key, local), _legacy_path(key, local)
+    if not (d.is_dir() and legacy.is_file()):
+        return set()
+    old = _parse_store(legacy)
+    if old is None:
+        _note(f"{legacy.name} sits next to {d.name} but can't be read; it is left as it is.")
+        return set()
+    extra = {n: v for n, v in old.items() if n not in got and n not in others}
+    got.update(extra)
+    _MERGED.add((key, local))
+    _note(f"{legacy.name} was found next to {d.name} (an older copy?): "
+          f"{len(extra)} dialog(s) only in it were added, and it will be set aside as "
+          f"{legacy.name}.merged on the next save.")
+    return set(extra)
+
+
 def _load_dialogs(key: str) -> dict[str, list[Msg]]:
     with _SAVE_LOCK:                   # a recovery moving the store aside is not "missing"
         _wait_for_store(_store_path(key))
@@ -523,21 +635,27 @@ def _load_dialogs(key: str) -> dict[str, list[Msg]]:
             split_store(key)           # first load that may write: import the old file
         except _datadir.StoreRefused:
             pass                       # read-only here: read the old file as it is
+        except OSError as e:           # the import failed: it left the old file as it was
+            _note(f"Could not split {_store_path(key).name} into one file per dialog ({e}); "
+                  "reading it as it is.")
         public, private = _read_layout(key), _read_layout(key, True)
+        added = {False: _merge_old_file(key, False, public, private),
+                 True: _merge_old_file(key, True, private, public)}
         _STORE_SEEN[key] = _store_stat(key)
-    raw = {**public, **private}                    # local/private wins
-    if not raw:
-        return {}
-    fields = Msg.__dataclass_fields__
-    out = {name: [Msg(**{k: v for k, v in m.items() if k in fields}) for m in msgs]
-           for name, msgs in raw.items()}
-    for local, got in ((False, public), (True, private)):
-        d = _dir_path(key, local)
-        if d.is_dir():                 # what a save would write for each, so unchanged ones are skipped
-            _DIGESTS[str(d)] = {n: _digest(_dialog_body(n, [asdict(m) for m in out[n]]))
-                                for n in got}
-            _ORDER_SEEN[str(d)] = list(got)
-    return out
+        raw = {**public, **private}                    # local/private wins
+        if not raw:
+            return {}
+        fields = Msg.__dataclass_fields__
+        out = {name: [Msg(**{k: v for k, v in m.items() if k in fields}) for m in msgs]
+               for name, msgs in raw.items()}
+        for local, got in ((False, public), (True, private)):
+            d = _dir_path(key, local)
+            if d.is_dir():             # what a save would write for each, so unchanged ones are skipped
+                seen = [n for n in got if n not in added[local]]   # merged ones are not on disk yet
+                _DIGESTS[str(d)] = {n: _digest(_dialog_body(n, [asdict(m) for m in out[n]]))
+                                    for n in seen}
+                _ORDER_SEEN[str(d)] = seen
+        return out
 
 
 def _tmp_path(p: Path) -> Path:
@@ -602,8 +720,12 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
                     private[name] = raw_msgs
                 else:
                     public[name] = raw_msgs
-            _save_dir(key, False, public)
-            _save_dir(key, True, private)
+            # write everything first, delete after: a failed write never loses a dialog
+            _write_dir(key, False, public)
+            _write_dir(key, True, private)
+            _settle_merged(key)
+            _prune_dir(key, False, public, set(private))
+            _prune_dir(key, True, private, set(public))
             _STORE_SEEN[key] = _store_stat(key)
             _UNSAVED.discard(key)
         except _datadir.StoreRefused as e:

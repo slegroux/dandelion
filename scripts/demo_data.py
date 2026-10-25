@@ -127,7 +127,7 @@ def main() -> int:
     store, marker = data / "dialogs-kernel.json", data / ".demo-data"
     folder = data / "dialogs-kernel.d"
     if (store.exists() or folder.exists()) and not marker.exists() and not a.force:
-        sys.exit(f"refusing to replace {folder}: this script didn't write it (--force to anyway)")
+        sys.exit(f"refusing to replace {store if store.exists() else folder}: this script didn't write it (--force to anyway)")
     data.mkdir(parents=True, exist_ok=True)
     (data / ".dandelion-store").write_text("")     # a data folder needs its marker
     (root / "papers").mkdir(exist_ok=True)
@@ -145,6 +145,9 @@ def main() -> int:
 
     store.unlink(missing_ok=True)
     shutil.rmtree(folder, ignore_errors=True)
+    shutil.rmtree(data / "backups", ignore_errors=True)    # else the guard sees the old snapshots
+    for bak in data.glob("dialogs-*.bak"):
+        bak.unlink()
     marker.write_text("written by scripts/demo_data.py\n")
     be = HttpKernelBackend(Target(name="kernel", url=a.kernel_url, token="dummy", backend="kernel"))
     for dialog, cells in DIALOGS:

@@ -518,9 +518,10 @@ and a save rewrites only the dialogs you changed; a conflicted copy is skipped
 with a notice and left where it is. Dialogs kept local-only live in
 `dialogs-<target>.local.d/`. A notebook saved by an older version
 (`dialogs-<target>.json`) is imported the first time it is opened and kept as
-`dialogs-<target>.json.pre-split`; to go back, stop the app and run
-`dandelion store --to-single`, which writes `dialogs-<target>.json` again
-(`--to-folder` does the reverse). So your notebook survives a restart, and it
+`dialogs-<target>.json.pre-split`. To go back to an older Dandelion, stop the
+app and run `dandelion store --to-single`, which writes `dialogs-<target>.json`
+again; this version splits it again the next time it starts, so use it only
+when switching versions (`--to-folder` splits right away). So your notebook survives a restart, and it
 survives the backend being rebuilt when you save Settings or switch targets.
 Cells, outputs, plots, and pin/mute flags are all restored. (The mock fallback
 used when no server is reachable stays ephemeral; a **solveit** target keeps

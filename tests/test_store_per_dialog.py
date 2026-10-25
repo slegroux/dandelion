@@ -63,7 +63,9 @@ def test_old_to_new_to_old_is_the_same_json(tmp_path):
     assert not _d().exists() and (tmp_path / "dialogs-kernel.d.pre-join").is_dir()
     assert client.split_store(KEY)                       # and again: nothing is overwritten
     assert client._read_dir(_d()) == RAW
-    assert len(list(tmp_path.glob("dialogs-kernel.json.pre-split*"))) == 2
+    assert len(list(tmp_path.glob("dialogs-kernel.json.pre-split*"))) == 1   # an identical copy isn't kept twice
+    assert client.join_store(KEY)
+    assert not list(tmp_path.glob("dialogs-kernel.d.pre-join-*"))
 
 
 def test_names_that_differ_only_in_case_get_different_files(tmp_path):
@@ -237,3 +239,156 @@ def test_the_store_command_switches_both_ways_and_refuses_under_a_live_server(tm
     assert cli.main(["store", "--to-single"]) == 0
     assert json.loads(p.read_text()) == RAW and not _d().exists()
     assert cli.main(["store"]) == 2
+
+
+# ---- after the review ---------------------------------------------------------------
+def test_an_interrupted_import_leaves_the_old_file_and_loses_nothing(tmp_path, monkeypatch):
+    p = _legacy(tmp_path, RAW)
+    real, calls = client._write_dialog_store, []
+
+    def crash(path, raw):
+        calls.append(path)
+        if len(calls) == 2:
+            raise OSError(28, "No space left on device")
+        real(path, raw)
+    with monkeypatch.context() as m:
+        m.setattr(client, "_write_dialog_store", crash)
+        loaded = client._load_dialogs(KEY)                  # does not raise
+    assert list(loaded) == list(RAW) and p.exists() and not _d().exists()
+    assert any("Could not split" in n for n in client.STORE_NOTICES)
+    stale = list(tmp_path.glob("dialogs-kernel.d.tmp-*"))
+    assert stale                                            # the half-built folder, never read
+    assert list(client._load_dialogs(KEY)) == list(RAW)     # next start: imports properly
+    assert _d().is_dir() and not p.exists() and not list(tmp_path.glob("*.tmp-*"))
+    assert client._read_dir(_d()) == RAW
+
+
+def test_a_damaged_file_and_bak_do_not_lock_the_notebook(tmp_path):
+    _save_dialogs(KEY, _dialogs(tag="a"))
+    _save_dialogs(KEY, _dialogs(tag="b"))
+    f = _f("mid")
+    f.write_text("{torn")
+    f.with_suffix(".json.bak").write_text("{torn too")
+    for s_ in client._snapshots(f):
+        s_.unlink()
+    assert sorted(client._load_dialogs(KEY)) == ["Alpha", "zeta"]
+    assert sorted(client._load_dialogs(KEY)) == ["Alpha", "zeta"]       # and on the next start
+    assert not f.with_suffix(".json.bak").exists()
+
+
+def test_a_bak_left_beside_a_set_aside_file_is_not_a_vanished_store(tmp_path):
+    _save_dialogs(KEY, _dialogs(tag="a"))
+    _save_dialogs(KEY, _dialogs(tag="b"))
+    f = _f("mid")
+    f.replace(f.with_name(f.name + ".corrupt-20260101-000000-000000"))   # an older version's leftovers
+    assert sorted(client._load_dialogs(KEY)) == ["Alpha", "zeta"]
+    _f("zeta").with_suffix(".json.bak").write_text("x")
+    _f("zeta").unlink()                                                  # a cut-short delete, no .corrupt
+    with pytest.raises(client.StoreUnreadable):
+        client._load_dialogs(KEY)
+
+
+def test_a_delete_cut_short_never_leaves_a_bak_without_its_file(tmp_path, monkeypatch):
+    _save_dialogs(KEY, _dialogs(tag="a"))
+    _save_dialogs(KEY, _dialogs(tag="b"))
+    loaded = client._load_dialogs(KEY)
+    del loaded["mid"]
+    real = type(_f("mid")).unlink
+
+    def cut(self, *a, **k):
+        if self == _f("mid"):
+            raise OSError("killed")
+        return real(self, *a, **k)
+    with monkeypatch.context() as m:
+        m.setattr(type(_f("mid")), "unlink", cut)
+        with pytest.raises(OSError):
+            client._prune_dir(KEY, False, {n: [] for n in loaded}, set())
+    assert not _f("mid").with_suffix(".json.bak").exists()
+    assert sorted(client._load_dialogs(KEY)) == ["Alpha", "mid", "zeta"]   # the file is still there
+
+
+def test_an_old_file_next_to_the_folder_is_merged_not_ignored(tmp_path):
+    _save_dialogs(KEY, _dialogs(names=("current",)))
+    p = _legacy(tmp_path, {"current": [], "only-old": [{"id": "1", "msg_type": "note", "content": "o"}]})
+    loaded = client._load_dialogs(KEY)
+    assert sorted(loaded) == ["current", "only-old"]
+    assert [m.content for m in loaded["current"]] == ["x-current"]          # the folder wins
+    assert any("older copy" in n for n in client.STORE_NOTICES)
+    _save_dialogs(KEY, loaded)
+    assert not p.exists() and p.with_name(p.name + ".merged").is_file()
+    assert sorted(client._load_dialogs(KEY)) == ["current", "only-old"]
+
+
+def test_making_a_dialog_private_writes_the_private_copy_before_deleting_the_public_one(tmp_path, monkeypatch):
+    _save_dialogs(KEY, _dialogs(names=("diary", "other")))
+    (tmp_path / "dialogs-kernel.private").write_text("diary\n")
+    loaded = client._load_dialogs(KEY)
+    real = client._write_dialog_store
+
+    def full(path, raw):
+        if "local" in str(path):
+            raise OSError(28, "No space left on device")
+        real(path, raw)
+    with monkeypatch.context() as m:
+        m.setattr(client, "_write_dialog_store", full)
+        _save_dialogs(KEY, loaded)                          # the private write fails
+    assert _f("diary").exists()                             # still in the public folder
+    assert "diary" in client._load_dialogs(KEY)
+    _save_dialogs(KEY, loaded)
+    assert not _f("diary").exists() and _f("diary", True).exists()
+
+
+def test_snapshots_of_a_private_dialog_leave_the_synced_root(tmp_path):
+    _save_dialogs(KEY, _dialogs(tag="a", names=("diary",)))
+    _save_dialogs(KEY, _dialogs(tag="b", names=("diary",)))
+    assert client._snapshots(_f("diary"))
+    (tmp_path / "dialogs-kernel.private").write_text("diary\n")
+    _save_dialogs(KEY, _dialogs(tag="c", names=("diary",)))
+    assert client._snapshots(_f("diary")) == []
+    assert not [f for f in (tmp_path / "backups").glob("*diary*")]
+    assert client._snapshot_dir(_f("diary", True)) != tmp_path / "backups"
+
+
+def test_snapshots_of_deleted_dialogs_are_bounded(tmp_path, monkeypatch):
+    monkeypatch.setattr(client, "SNAPSHOT_KEEP", 3)
+    for i in range(8):
+        _save_dialogs(KEY, {f"gone{i}": [Msg("1", "note", "x")], "keep": []})
+    _save_dialogs(KEY, {"keep": []})
+    orphans = [f for f in (tmp_path / "backups").glob("dialogs-kernel.d__gone*")]
+    assert 0 < len(orphans) <= 3
+
+
+def test_an_emptied_folder_with_snapshots_is_refused_like_a_missing_one(tmp_path):
+    _save_dialogs(KEY, _dialogs(tag="a"))
+    _save_dialogs(KEY, _dialogs(tag="b"))
+    for f in _d().iterdir():
+        f.unlink()                                          # evicted mid-sync
+    with pytest.raises(client.StoreUnreadable):
+        client._load_dialogs(KEY)
+
+
+def test_a_dialog_named_empty_survives_the_split(tmp_path):
+    _legacy(tmp_path, {"": [{"id": "1", "msg_type": "note", "content": "blank"}]})
+    assert [m.content for m in client._load_dialogs(KEY)[""]] == ["blank"]
+    assert client.STORE_NOTICES == []
+
+
+def test_a_root_named_like_a_dialog_folder_keeps_its_snapshots_in_place(tmp_path):
+    p = tmp_path / "notes.d" / "dialogs-kernel.json"
+    assert client._snapshot_dir(p) == tmp_path / "notes.d" / "backups"
+    assert client._snap_stem(p) == "dialogs-kernel"
+
+
+def test_store_command_reports_the_keys_it_switched_before_failing(tmp_path, monkeypatch, capsys):
+    _legacy(tmp_path, RAW)
+    (tmp_path / "dialogs-other.json").write_text("{}")
+    real = client.split_store
+
+    def flaky(key):
+        if key == "other":
+            raise client.StoreUnreadable("boom")
+        return real(key)
+    monkeypatch.setattr(client, "split_store", flaky)
+    assert cli.main(["store", "--to-folder"]) == 1
+    err = capsys.readouterr().err
+    assert "boom" in err and "kernel" in err

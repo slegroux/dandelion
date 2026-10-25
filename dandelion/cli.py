@@ -24,10 +24,12 @@ Usage:
                                      unpack a backup into this install (stop the
                                      app first); existing files kept unless --force
     dandelion store --to-single|--to-folder
-                                     keep each notebook in one file
-                                     (dialogs-<target>.json) or one file per
-                                     dialog (dialogs-<target>.d/); stop the app
-                                     first; the old files are kept aside
+                                     --to-single writes each notebook as one
+                                     dialogs-<target>.json again, for going back to
+                                     an older Dandelion (this version splits it
+                                     again the next time it starts); --to-folder
+                                     splits it now. Stop the app first; the old
+                                     files are kept aside
 
 All of that lives locally in ~/.config/dandelion (DANDELION_DATA), never
 in the git repo.
@@ -340,13 +342,18 @@ def cmd_store(args):
     if not _adopt_legacy_root():
         print("store refused: stop the older server first (see above)", file=sys.stderr)
         return 1
+    done: list[str] = []
     try:
         datadir.ensure_stopped()
         datadir.check_writable()
         change = client.join_store if args[0] == "--to-single" else client.split_store
-        done = [k for k in client.store_keys() if change(k)]
+        for k in client.store_keys():
+            if change(k):
+                done.append(k)
     except (datadir.AppRunning, datadir.StoreRefused, client.StoreUnreadable) as e:
         print(f"store refused: {e}", file=sys.stderr)
+        if done:
+            print(f"  already switched: {', '.join(done)}", file=sys.stderr)
         return 1
     print(f"Switched {len(done)} notebook(s) in {datadir.data_root()}"
           f"{': ' + ', '.join(done) if done else ''}")
