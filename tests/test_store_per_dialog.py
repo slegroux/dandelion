@@ -392,3 +392,79 @@ def test_store_command_reports_the_keys_it_switched_before_failing(tmp_path, mon
     assert cli.main(["store", "--to-folder"]) == 1
     err = capsys.readouterr().err
     assert "boom" in err and "kernel" in err
+
+
+# ---- after the re-review --------------------------------------------------------------
+def test_private_snapshots_of_two_roots_are_kept_apart(tmp_path, monkeypatch):
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / datadir.MARKER).write_text("")
+    (tmp_path / "dialogs-kernel.private").write_text("journal\n")
+    (other / "dialogs-kernel.private").write_text("journal\n")
+    _save_dialogs(KEY, {"journal": [Msg("1", "note", "A0")]})
+    _save_dialogs(KEY, {"journal": [Msg("1", "note", "A1")]})
+    here = client._snapshot_dir(_f("journal", True))
+    monkeypatch.setenv("DANDELION_DATA", str(other))
+    datadir.unfreeze_root()
+    _save_dialogs(KEY, {"journal": [Msg("1", "note", "B0")]})
+    _save_dialogs(KEY, {"journal": [Msg("1", "note", "B1")]})
+    there = client._snapshot_dir(client._dialog_file(client._dir_path(KEY, True), "journal"))
+    assert here != there and list(here.iterdir()) and list(there.iterdir())
+    assert all("A" in f.read_text() for f in here.iterdir())
+    assert all("B" in f.read_text() for f in there.iterdir())
+
+
+def test_a_merged_file_that_changed_since_is_not_set_aside(tmp_path):
+    _save_dialogs(KEY, _dialogs(names=("cur",)))
+    p = _legacy(tmp_path, {"cur": [], "old1": [{"id": "1", "msg_type": "note", "content": "o"}]})
+    loaded = client._load_dialogs(KEY)
+    _legacy(tmp_path, {"cur": [], "old1": [], "new-on-old-mac": []})     # an older version saves again
+    os.utime(p, ns=(5 * 10 ** 9, 5 * 10 ** 9))
+    _save_dialogs(KEY, loaded)
+    assert p.exists() and not p.with_name(p.name + ".merged").exists()
+    assert any("changed after it was merged" in n for n in client.STORE_NOTICES)
+    assert "new-on-old-mac" in client._load_dialogs(KEY)
+    assert client._MERGED == {} or all(k[0] == str(tmp_path) for k in client._MERGED)
+
+
+def test_take_over_works_after_every_dialog_was_deleted_on_purpose(tmp_path):
+    _save_dialogs(KEY, _dialogs())
+    _save_dialogs(KEY, {})
+    assert client._store_there(client._store_path(KEY))
+    b = client._InMemoryBackend(store_key=KEY)
+    b._dialogs = {"typed": [Msg("1", "note", "x")]}
+    b.reload()                                              # no "missing; keeping" error
+    assert b.list_dialogs() == []
+
+
+def test_a_failed_rename_cleans_its_tmp_and_cleanup_only_matches_its_own(tmp_path, monkeypatch):
+    other = tmp_path / "dialogs-kernel.d.tmp-x.d"           # another target's folder
+    other.mkdir()
+    (other / "keep.txt").write_text("k")
+    _legacy(tmp_path, RAW)
+    real = type(_d()).replace
+
+    def fail(self, target):
+        if ".tmp-" in self.name and self.name.startswith("dialogs-kernel.d.tmp-") and not self.name.endswith(".d"):
+            raise OSError(66, "Directory not empty")
+        return real(self, target)
+    with monkeypatch.context() as m:
+        m.setattr(type(_d()), "replace", fail)
+        client._load_dialogs(KEY)
+    assert any("Could not split" in n for n in client.STORE_NOTICES)      # the rename really failed
+    assert not [f for f in tmp_path.iterdir() if f.name.startswith("dialogs-kernel.d.tmp-")
+                and not f.name.endswith(".d")]
+    assert (other / "keep.txt").exists()
+    (tmp_path / "dialogs-kernel.d.tmp-4242").mkdir()        # left by a killed import
+    _d().mkdir(exist_ok=True)
+    client._load_dialogs(KEY)
+    assert not (tmp_path / "dialogs-kernel.d.tmp-4242").exists() and (other / "keep.txt").exists()
+
+
+def test_restore_warns_about_an_old_file_beside_a_folder(tmp_path, capsys):
+    _save_dialogs(KEY, _dialogs())
+    _legacy(tmp_path, {"old": []})
+    arc, _ = datadir.backup(tmp_path / "b.tar.gz")
+    (tmp_path / "dialogs-kernel.json").unlink()
+    datadir.restore(arc)
+    assert "next to its dialog folder" in capsys.readouterr().err

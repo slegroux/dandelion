@@ -1401,6 +1401,14 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
                 skipped.append(f"{m.name} ({e.strerror or e})")
                 continue
             restored.append(m.name)
+    for name in restored:
+        pp = PurePosixPath(name)
+        if len(pp.parts) == 2 and re.fullmatch(r"dialogs-.+(?<!\.local)\.json", pp.name) \
+                and data_root().joinpath(pp.name[:-5] + ".d").is_dir():
+            import sys
+            print(f"[dandelion] WARNING: restored {pp.name} next to its dialog folder; the "
+                  "folder wins, and the dialogs only the file has are added at the next start. "
+                  "Nothing is rolled back.", file=sys.stderr)
     # re-key converted markdown to this install's upload paths
     cache = _cache_dir()
     for name, old_key in (index.items() if isinstance(index, dict) else []):

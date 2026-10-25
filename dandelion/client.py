@@ -112,7 +112,10 @@ def _in_dialog_dir(p: Path) -> bool:
 def _snapshot_dir(p: Path) -> Path:
     if _in_dialog_dir(p):
         if p.parent.name.endswith(".local.d"):
-            return _datadir.local_dir() / "backups"   # private text never goes to the synced root
+            # private text never goes to the synced root; one folder per data root,
+            # so two roots' snapshots are never mixed up or pruned by each other
+            root = hashlib.sha1(str(_datadir.data_root().resolve()).encode()).hexdigest()[:12]
+            return _datadir.local_dir() / "backups" / root
         return p.parent.parent / "backups"
     return p.parent / "backups"
 
@@ -246,9 +249,14 @@ def _dir_of(p: Path) -> Path:
     return p.with_name(f"{p.stem}.d")
 
 
+def _has_dialogs(d: Path) -> bool:
+    """A folder with dialog files, or emptied on purpose (an index with no dialogs)."""
+    return any(d.glob("*~*.json")) or _read_index(d) == []
+
+
 def _store_there(p: Path) -> bool:
     d = _dir_of(p)
-    return p.exists() or (d.is_dir() and any(d.glob("*~*.json")))
+    return p.exists() or (d.is_dir() and _has_dialogs(d))
 
 
 def _store_gone(p: Path) -> bool:
@@ -261,7 +269,7 @@ def _store_gone(p: Path) -> bool:
             if any(not b.with_suffix("").exists() and not any(d.glob(f"{b.stem}.corrupt-*"))
                    for b in d.glob("*.json.bak") if b.name != f"{_INDEX}.bak"):
                 return True
-            if any(d.glob("*~*.json")) or _read_index(d) == []:
+            if _has_dialogs(d):
                 return False           # has dialogs, or was emptied on purpose
         except OSError:
             return False
@@ -463,8 +471,34 @@ def _move_aside(p: Path, suffix: str) -> None:
     p.replace(_aside(p, suffix))
 
 
-# (key, local) whose old single file turned up next to its folder and was merged
-_MERGED: set[tuple[str, bool]] = set()
+# (data root, key, local) -> (mtime_ns, size) of the old single file that turned up
+# next to its folder and was merged; only that very file is set aside afterwards
+_MERGED: dict[tuple[str, str, bool], tuple | None] = {}
+
+
+def _merged_key(key: str, local: bool) -> tuple[str, str, bool]:
+    return str(_data_dir()), key, local
+
+
+def _file_sig(p: Path) -> tuple | None:
+    try:
+        st = p.stat()
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
+def _clean_stale_tmp(d: Path) -> None:
+    """Remove the half-built folders an interrupted import left (this folder's own
+    <name>.tmp-<pid> only, never another notebook's)."""
+    import shutil
+    pat = re.compile(re.escape(d.name) + r"\.tmp-\d+")
+    try:
+        for f in d.parent.iterdir():
+            if f.is_dir() and not f.is_symlink() and pat.fullmatch(f.name):
+                shutil.rmtree(f, ignore_errors=True)
+    except OSError:
+        pass
 
 
 def _write_dir(key: str, local: bool, part: dict[str, list]) -> None:
@@ -481,9 +515,7 @@ def _write_dir(key: str, local: bool, part: dict[str, list]) -> None:
         return
     w, dig = d, _DIGESTS.setdefault(str(d), {})
     if fresh:
-        import shutil
-        for stale in d.parent.glob(f"{d.name}.tmp-*"):
-            shutil.rmtree(stale, ignore_errors=True)    # an interrupted import
+        _clean_stale_tmp(d)
         w, dig = d.with_name(f"{d.name}.tmp-{os.getpid()}"), {}
         _datadir.make_dirs(w)
     for name, raw in part.items():
@@ -493,12 +525,17 @@ def _write_dir(key: str, local: bool, part: dict[str, list]) -> None:
             _write_dialog_store(f, body)
             dig[name] = _digest(body)
     order = list(part)
-    if part or not local:
-        if fresh or _ORDER_SEEN.get(str(d)) != order or not (d / _INDEX).exists():
-            _write_dialog_store(w / _INDEX, {"order": order})
-            _ORDER_SEEN[str(d)] = order
+    if (part or not local) and (fresh or _ORDER_SEEN.get(str(d)) != order
+                                or not (d / _INDEX).exists()):
+        _write_dialog_store(w / _INDEX, {"order": order})
+        _ORDER_SEEN[str(d)] = order
     if fresh:
-        w.replace(d)
+        try:
+            w.replace(d)
+        except OSError:
+            import shutil
+            shutil.rmtree(w, ignore_errors=True)
+            raise
         _DIGESTS[str(d)] = dig
         if legacy.exists():
             _move_aside(legacy, ".pre-split")
@@ -550,11 +587,21 @@ def _prune_orphan_snapshots(d: Path, live: dict) -> None:
 
 def _settle_merged(key: str) -> None:
     for local in (False, True):
-        if (key, local) in _MERGED:
-            legacy = _legacy_path(key, local)
-            if legacy.exists():
-                _move_aside(legacy, ".merged")
-            _MERGED.discard((key, local))
+        mk = _merged_key(key, local)
+        if mk not in _MERGED:
+            continue
+        legacy = _legacy_path(key, local)
+        seen = _MERGED.pop(mk)
+        if not legacy.exists():
+            continue
+        if _file_sig(legacy) != seen:            # changed since it was merged: merge it again
+            _note(f"{legacy.name} changed after it was merged; it is left in place "
+                  "and merged again at the next start.")
+            continue
+        try:
+            _move_aside(legacy, ".merged")
+        except OSError as e:                     # never abort a save over this
+            _note(f"Could not set {legacy.name} aside ({e}); it is merged again at the next start.")
 
 
 def split_store(key: str) -> bool:
@@ -565,6 +612,7 @@ def split_store(key: str) -> bool:
         _datadir.check_writable(p)
         did = False
         for local in (False, True):
+            _clean_stale_tmp(_dir_path(key, local))
             if not _dir_path(key, local).is_dir() and _legacy_path(key, local).is_file():
                 raw = _read_raw_dialogs(_legacy_path(key, local))
                 _datadir.make_dirs(p.parent)
@@ -621,10 +669,10 @@ def _merge_old_file(key: str, local: bool, got: dict, others: dict) -> set[str]:
         return set()
     extra = {n: v for n, v in old.items() if n not in got and n not in others}
     got.update(extra)
-    _MERGED.add((key, local))
-    _note(f"{legacy.name} was found next to {d.name} (an older copy?): "
-          f"{len(extra)} dialog(s) only in it were added, and it will be set aside as "
-          f"{legacy.name}.merged on the next save.")
+    _MERGED[_merged_key(key, local)] = _file_sig(legacy)
+    added = f"{len(extra)} dialog(s) only in it were added" if extra else "all its dialogs are already there"
+    _note(f"{legacy.name} was found next to {d.name} (an older copy?): {added}, "
+          f"and it will be set aside as {legacy.name}.merged on the next save.")
     return set(extra)
 
 
@@ -732,7 +780,7 @@ def _save_dialogs(key: str, dialogs: dict[str, list[Msg]]) -> None:
             _UNSAVED.add(key)
             _datadir.warn_refused(e)
         except OSError as e:           # never let a disk hiccup break the app,
-            import sys                 # but don't hide it either
+                                       # but don't hide it either
             print(f"[dandelion] WARNING: could not save {p}: {e}", file=sys.stderr)
 
 
