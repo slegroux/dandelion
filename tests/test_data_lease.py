@@ -76,9 +76,18 @@ def _store(root, dialogs):
     return (root / "dialogs-kernel.json").read_bytes()
 
 
+def _store_dir(root, dialogs):
+    """What another Mac's save leaves: one file per dialog (the store already split)."""
+    d = root / "dialogs-kernel.d"
+    d.mkdir(exist_ok=True)
+    for name, cells in dialogs.items():
+        raw = [{"id": i, "msg_type": "note", "content": c} for i, c in cells]
+        client._dialog_file(d, name).write_text(client._dialog_body(name, raw))
+    (d / client._INDEX).write_text(json.dumps({"order": list(dialogs)}))
+
+
 def _contents(root):
-    return {k: [m["content"] for m in v]
-            for k, v in json.loads((root / "dialogs-kernel.json").read_text()).items()}
+    return {k: [m["content"] for m in v] for k, v in client._read_layout("kernel").items()}
 
 
 def _save(text="mine"):
@@ -413,7 +422,7 @@ def test_take_over_needs_the_confirmation(ui, root):
 def test_leaving_read_only_reloads_and_keeps_what_was_in_memory(ui, root):
     app, backend = ui
     backend.add("d", "typed while read-only", "note")             # refused, kept in memory only
-    _store(root, {"d": [("1", "old"), ("2", "saved on Mac A")]})  # Mac A kept working
+    _store_dir(root, {"d": [("1", "old"), ("2", "saved on Mac A")]})  # Mac A kept working
     page = TestClient(app.app).post("/lease/take-over", data={"confirm": "on"}).text
     assert datadir.lease_banner() is None and _on_disk(root)["machine"] == ME
     assert [m.content for m in backend.messages("d")] == ["old", "saved on Mac A"]
@@ -454,7 +463,7 @@ def test_the_default_root_never_lapses(root, clock, monkeypatch):
     clock.advance(10 * 60)                                       # a night's sleep, one Mac
     assert datadir.store_refusal() is None and datadir.lease_banner() is None
     client._save_dialogs("kernel", {"d": [client.Msg(id="1", msg_type="note", content="on wake")]})
-    assert json.loads((cfg / "dialogs-kernel.json").read_text())["d"][0]["content"] == "on wake"
+    assert client._read_layout("kernel")["d"][0]["content"] == "on wake"
     assert datadir._tick() and "another machine" not in datadir.lease_status()
 
 
@@ -484,7 +493,7 @@ def test_waking_with_an_unchanged_store_keeps_and_saves_the_edits(awake, root):
 
 def test_waking_to_a_store_the_other_mac_changed_reloads_and_keeps_the_edits_aside(awake, root):
     app, backend = awake
-    _store(root, {"d": [("1", "old"), ("2", "saved on Mac A")]})  # its save synced, its lease not
+    _store_dir(root, {"d": [("1", "old"), ("2", "saved on Mac A")]})  # its save synced, its lease not
     page = TestClient(app.app).post("/lease/check").text
     assert "Dialogs reloaded from disk." in page
     assert [m.content for m in backend.messages("d")] == ["old", "saved on Mac A"]
@@ -668,3 +677,30 @@ def test_two_processes_on_different_machines(tmp_path):
         for p in procs:
             if p.poll() is None:
                 p.kill()
+
+
+# ---- a missing store beside its backups is never loaded as empty -----------------
+def test_a_missing_store_with_a_bak_is_refused_on_a_non_default_root(root):
+    (root / "dialogs-kernel.json.bak").write_text('{"d": []}')
+    with pytest.raises(client.StoreUnreadable):
+        client._load_dialogs("kernel")
+
+
+def test_a_missing_store_with_a_bak_is_refused_on_a_symlinked_default_root(tmp_path, monkeypatch):
+    real = tmp_path / "mount"
+    real.mkdir()
+    cfg = datadir.config_dir()
+    cfg.parent.mkdir(parents=True)
+    cfg.symlink_to(real)                                         # the user's link into pCloud
+    monkeypatch.setenv("DANDELION_DATA", str(cfg))
+    (real / "dialogs-kernel.json.bak").write_text('{"d": []}')
+    with pytest.raises(client.StoreUnreadable):
+        client._wait_for_store(cfg / "dialogs-kernel.json")
+
+
+def test_a_missing_store_on_the_real_default_root_starts_empty(tmp_path, monkeypatch):
+    cfg = datadir.config_dir()
+    cfg.mkdir(parents=True)
+    monkeypatch.setenv("DANDELION_DATA", str(cfg))
+    (cfg / "dialogs-kernel.json.bak").write_text('{"d": []}')
+    client._wait_for_store(cfg / "dialogs-kernel.json")          # no raise

@@ -1866,7 +1866,7 @@ def test_persistence_round_trip_survives_backend_rebuild(monkeypatch, tmp_path):
     msgs = b2.messages("paper/notes")
     assert len(msgs) == 1
     assert msgs[0].content == "x = 2" and msgs[0].pinned is True
-    assert _store_path("kernel").exists()
+    assert _store_path("kernel").with_name("dialogs-kernel.d").is_dir()
 
 
 def test_mock_backend_is_ephemeral(monkeypatch, tmp_path):
@@ -1897,9 +1897,9 @@ def test_private_dialogs_save_to_gitignored_local_overlay(monkeypatch, tmp_path)
         "paper/public": [Msg("m2", "note", "public")],
     })
 
-    assert "paper/public" in (tmp_path / "dialogs-kernel.json").read_text()
-    assert "paper/private-ap" not in (tmp_path / "dialogs-kernel.json").read_text()
-    assert "paper/private-ap" in (tmp_path / "dialogs-kernel.local.json").read_text()
+    from dandelion.client import _read_dir
+    assert list(_read_dir(tmp_path / "dialogs-kernel.d")) == ["paper/public"]
+    assert list(_read_dir(tmp_path / "dialogs-kernel.local.d")) == ["paper/private-ap"]
     loaded = _load_dialogs("kernel")
     assert loaded["paper/private-ap"][0].content == "private"
     assert loaded["paper/public"][0].content == "public"

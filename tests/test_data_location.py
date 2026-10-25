@@ -129,7 +129,7 @@ def test_marked_root_opens_and_saves(tmp_path, monkeypatch):
     monkeypatch.setenv("DANDELION_DATA", str(d))
     assert datadir.store_refusal() is None
     client._save_dialogs("kernel", {"d": [client.Msg(id="1", msg_type="note", content="hi")]})
-    assert json.loads((d / "dialogs-kernel.json").read_text())["d"][0]["content"] == "hi"
+    assert client._read_layout("kernel")["d"][0]["content"] == "hi"
 
 
 def test_default_root_is_never_refused_and_gets_the_marker(home):
@@ -138,7 +138,8 @@ def test_default_root_is_never_refused_and_gets_the_marker(home):
     datadir.claim_default_root()
     assert (root / datadir.MARKER).is_file()
     client._save_dialogs("kernel", {"d": []})
-    assert (root / "dialogs-kernel.json").is_file()
+    client._save_dialogs("kernel", {"d": [client.Msg(id="1", msg_type="note", content="x")]})
+    assert (root / "dialogs-kernel.d").is_dir()
 
 
 def test_claim_leaves_a_pointed_root_alone(home, tmp_path):
@@ -241,7 +242,7 @@ def test_keys_tools_and_pointer_stay_out_of_the_data_folder(home, tmp_path, monk
     assert (cfg / "secrets.json").is_file() and (cfg / "tools.json").is_file()
     arc, _ = datadir.backup(tmp_path / "b.tar.gz")
     with tarfile.open(arc) as t:
-        assert "data/dialogs-kernel.json" in t.getnames()
+        assert any(n.startswith("data/dialogs-kernel.d/d~") for n in t.getnames())
         assert not [n for n in t.getnames() if "secrets" in n]
         assert "sk-test" not in "".join(t.extractfile(m).read().decode("utf-8", "ignore")
                                         for m in t.getmembers() if m.isfile())
@@ -270,7 +271,7 @@ def test_b1_a_pointer_change_does_not_redirect_saves_until_restart(home, tmp_pat
     assert datadir.data_root() == root and datadir.pending_root() == other
     client._save_dialogs("kernel", _msg(text="local-new"))
     assert "REMOTE-REAL-WORK" in (other / "dialogs-kernel.json").read_text()   # intact
-    assert "local-new" in (root / "dialogs-kernel.json").read_text()
+    assert client._read_layout("kernel")["d"][0]["content"] == "local-new"
     datadir.unfreeze_root()
     assert datadir.data_root() == other                  # a restart picks it up
 

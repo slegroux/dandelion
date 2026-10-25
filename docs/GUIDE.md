@@ -511,8 +511,17 @@ The plain **Markdown (.md)** download still embeds images inline.
 ## Your work is saved
 
 Dialogs on the bundled **kernel** backend are persisted to disk — one JSON file
-per target at `~/.config/dandelion/dialogs-<target>.json` (override the
-directory with `DANDELION_DATA`). So your notebook survives a restart, and it
+per dialog, in a folder per target at `~/.config/dandelion/dialogs-<target>.d/`
+(override the directory with `DANDELION_DATA`). One file per dialog means a sync
+conflict (a pCloud "conflicted copy", two Macs) can only ever touch one dialog,
+and a save rewrites only the dialogs you changed; a conflicted copy is skipped
+with a notice and left where it is. Dialogs kept local-only live in
+`dialogs-<target>.local.d/`. A notebook saved by an older version
+(`dialogs-<target>.json`) is imported the first time it is opened and kept as
+`dialogs-<target>.json.pre-split`. To go back to an older Dandelion, stop the
+app and run `dandelion store --to-single`, which writes `dialogs-<target>.json`
+again; this version splits it again the next time it starts, so use it only
+when switching versions (`--to-folder` splits right away). So your notebook survives a restart, and it
 survives the backend being rebuilt when you save Settings or switch targets.
 Cells, outputs, plots, and pin/mute flags are all restored. (The mock fallback
 used when no server is reachable stays ephemeral; a **solveit** target keeps
@@ -583,10 +592,10 @@ after the sync, so this is a warning, not a lock: two Macs that start within one
 delay of each other can both think the folder is free.
 
 The notebook store also protects itself. Every save keeps the previous version
-as `dialogs-<target>.json.bak`, and while you work a timestamped copy goes to
-`backups/` every 15 minutes, newest 20 kept (`DANDELION_SNAPSHOT_MINUTES`,
-`DANDELION_SNAPSHOT_KEEP`). If the store is ever unreadable, the app sets the
-damaged file aside as `….corrupt-<time>`, reopens the newest good copy, and says
+of each dialog as `<dialog file>.json.bak`, and while you work a timestamped copy
+of each dialog goes to `backups/` every 15 minutes, newest 20 per dialog kept (`DANDELION_SNAPSHOT_MINUTES`,
+`DANDELION_SNAPSHOT_KEEP`). If a dialog's file is ever unreadable, the app sets that
+file aside as `….corrupt-<time>`, reopens the newest good copy, and says
 so in a banner instead of starting empty. Which
 cells are collapsed and the table-of-contents state are per browser and are not
 part of a backup. An older checkout that kept dialogs in the repo's `data/`
