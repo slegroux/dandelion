@@ -23,6 +23,11 @@ Usage:
     dandelion restore <archive> [--force]
                                      unpack a backup into this install (stop the
                                      app first); existing files kept unless --force
+    dandelion store --to-single|--to-folder
+                                     keep each notebook in one file
+                                     (dialogs-<target>.json) or one file per
+                                     dialog (dialogs-<target>.d/); stop the app
+                                     first; the old files are kept aside
 
 All of that lives locally in ~/.config/dandelion (DANDELION_DATA), never
 in the git repo.
@@ -325,9 +330,32 @@ def cmd_blog(args):
     return 0
 
 
+def cmd_store(args):
+    """`dandelion store --to-single|--to-folder` — switch the notebook layout."""
+    from . import client, datadir
+    _ignore_repo_data_env()
+    if len(args) != 1 or args[0] not in ("--to-single", "--to-folder"):
+        print("usage: dandelion store --to-single|--to-folder", file=sys.stderr)
+        return 2
+    if not _adopt_legacy_root():
+        print("store refused: stop the older server first (see above)", file=sys.stderr)
+        return 1
+    try:
+        datadir.ensure_stopped()
+        datadir.check_writable()
+        change = client.join_store if args[0] == "--to-single" else client.split_store
+        done = [k for k in client.store_keys() if change(k)]
+    except (datadir.AppRunning, datadir.StoreRefused, client.StoreUnreadable) as e:
+        print(f"store refused: {e}", file=sys.stderr)
+        return 1
+    print(f"Switched {len(done)} notebook(s) in {datadir.data_root()}"
+          f"{': ' + ', '.join(done) if done else ''}")
+    return 0
+
+
 COMMANDS = {"targets": cmd_targets, "doctor": cmd_doctor, "up": cmd_up,
             "serve": cmd_serve, "library": cmd_library, "blog": cmd_blog,
-            "backup": cmd_backup, "restore": cmd_restore}
+            "backup": cmd_backup, "restore": cmd_restore, "store": cmd_store}
 
 
 def main(argv=None):

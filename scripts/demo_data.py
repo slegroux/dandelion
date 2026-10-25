@@ -3,11 +3,12 @@
     uv run --extra kernel python -m server.kernel_server --port 5155 &   # a scratch kernel
     uv run python scripts/demo_data.py /path/to/scratch/dir --kernel-url http://localhost:5155
 
-Writes `dialogs-kernel.json` (the format HttpKernelBackend persists) under
+Writes the notebook (`dialogs-kernel.d/`, one file per dialog, as HttpKernelBackend
+persists it) under
 <dir>/data, plus <dir>/targets.yaml pointing the `kernel` target at the scratch
 kernel. Notes and Ask-AI answers are pre-written (no AI call is made); code cells
 are really executed on the kernel so their output and matplotlib figure are real.
-Nothing outside <dir> is touched, and an existing dialogs-kernel.json there is
+Nothing outside <dir> is touched, and an existing notebook there is
 replaced only if this script wrote it (or with --force). Run it from a checkout
 without a data/ folder: `serve` moves an old <repo>/data into DANDELION_DATA.
 Then run the UI with:
@@ -21,6 +22,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -115,7 +117,7 @@ def main() -> int:
     ap.add_argument("dir", type=Path, help="scratch directory (created if missing)")
     ap.add_argument("--kernel-url", default="http://localhost:5155")
     ap.add_argument("--force", action="store_true",
-                    help="replace a dialogs-kernel.json this script didn't write")
+                    help="replace a notebook this script didn't write")
     a = ap.parse_args()
     root = a.dir.resolve()
     home_cfg = (Path.home() / ".config").resolve()
@@ -123,8 +125,9 @@ def main() -> int:
         sys.exit("refusing to write under ~/.config")
     data = root / "data"
     store, marker = data / "dialogs-kernel.json", data / ".demo-data"
-    if store.exists() and not marker.exists() and not a.force:
-        sys.exit(f"refusing to replace {store}: this script didn't write it (--force to anyway)")
+    folder = data / "dialogs-kernel.d"
+    if (store.exists() or folder.exists()) and not marker.exists() and not a.force:
+        sys.exit(f"refusing to replace {folder}: this script didn't write it (--force to anyway)")
     data.mkdir(parents=True, exist_ok=True)
     (data / ".dandelion-store").write_text("")     # a data folder needs its marker
     (root / "papers").mkdir(exist_ok=True)
@@ -141,6 +144,7 @@ def main() -> int:
     from dandelion.targets import Target
 
     store.unlink(missing_ok=True)
+    shutil.rmtree(folder, ignore_errors=True)
     marker.write_text("written by scripts/demo_data.py\n")
     be = HttpKernelBackend(Target(name="kernel", url=a.kernel_url, token="dummy", backend="kernel"))
     for dialog, cells in DIALOGS:
@@ -154,7 +158,7 @@ def main() -> int:
             elif run:
                 be.exec(dialog, m.id)                        # really executed on the kernel
                 print(f"ran {dialog}: {m.output.strip()[:60]!r} rich={len(m.rich)}")
-    print(f"wrote {store} and {root / 'targets.yaml'}")
+    print(f"wrote {folder} and {root / 'targets.yaml'}")
     return 0
 
 

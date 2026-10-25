@@ -3307,7 +3307,7 @@ def dialog_delete(dialog: str):
 @rt("/dialog/private", methods=["post"])
 def dialog_private(dialog: str):
     """Toggle whether a dialog stays local-only (out of the committed/synced store).
-    Moves its cells between dialogs-<key>.json and the gitignored .local.json."""
+    Moves its file between dialogs-<key>.d and the gitignored dialogs-<key>.local.d."""
     backend = STATE["backend"]
     if hasattr(backend, "set_private"):
         backend.set_private(dialog)

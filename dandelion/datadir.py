@@ -5,8 +5,8 @@ All user data is local to the machine and never part of the git repo:
     ~/.config/dandelion/          (override with DANDELION_DATA, or the Settings
                                    "Data folder", which saves a pointer file
                                    ~/.config/dandelion/data-root)
-        dialogs-<target>.json            notebooks: cells, outputs, sidebar list
-        dialogs-<target>.local.json      dialogs marked "keep local only"
+        dialogs-<target>.d/              notebooks: one file per dialog (cells, outputs)
+        dialogs-<target>.local.d/        dialogs marked "keep local only"
         dialogs-<target>.private         names of those dialogs
         recall.json                      spaced-repetition schedule
         libraries.json                   registered nbdev libraries
@@ -258,12 +258,16 @@ def claim_default_root() -> None:
 
 
 def _has_store(root: Path) -> bool:
-    """A dialogs-<target>.json that reads as a store with at least one dialog: an
-    unmounted mountpoint is empty, and a stray empty or local-only file proves nothing."""
+    """A dialogs-<target>.json (or a dialogs-<target>.d folder) that reads as a store
+    with at least one dialog: an unmounted mountpoint is empty, and a stray empty or
+    local-only file proves nothing."""
     from .client import _parse_store
     try:
         return any(f.is_file() and not f.name.endswith(".local.json") and _parse_store(f)
-                   for f in root.glob("dialogs-*.json"))
+                   for f in root.glob("dialogs-*.json")) \
+            or any(_parse_store(f) for d in root.glob("dialogs-*.d")
+                   if d.is_dir() and not d.name.endswith(".local.d")
+                   for f in d.glob("*~*.json"))
     except OSError:
         return False
 
@@ -1332,13 +1336,8 @@ def _target_for(name: str) -> Path | None:
     return data_root().joinpath(*pp.parts[1:])
 
 
-def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[str]]:
-    """Unpack a backup into this install. Existing files are kept unless
-    `force`. Returns (restored, skipped). Run it with the app stopped: the app
-    loads notebooks at startup and would overwrite them on its next save."""
-    import json
-    from .paper import _cache_dir, _md_key
-    from .secrets_store import secrets_path
+def ensure_stopped() -> None:
+    """Raise AppRunning while the app (here or on another machine) has this folder open."""
     pid = running_server_pid()
     if pid:
         # the app holds notebooks in memory and rewrites the store on every
@@ -1351,6 +1350,16 @@ def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[s
                else "a machine whose lease file can't be read")
         raise AppRunning(f"Dandelion is open on {who} with this data folder; stop it there "
                          f"first. If it isn't running, delete {_lease_file()}")
+
+
+def restore(archive: str | Path, force: bool = False) -> tuple[list[str], list[str]]:
+    """Unpack a backup into this install. Existing files are kept unless
+    `force`. Returns (restored, skipped). Run it with the app stopped: the app
+    loads notebooks at startup and would overwrite them on its next save."""
+    import json
+    from .paper import _cache_dir, _md_key
+    from .secrets_store import secrets_path
+    ensure_stopped()
     check_writable()
     secret = secrets_path(write=True)
     restored, skipped, index = [], [], {}

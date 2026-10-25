@@ -156,7 +156,7 @@ def test_set_private_moves_dialog_between_stores(tmp_path, monkeypatch):
     gitignored .local.json overlay (and back), and is_private tracks state."""
     monkeypatch.setenv("DANDELION_DATA", str(tmp_path))
     from dandelion.client import (_InMemoryBackend, _read_private_dialogs,
-                                 _store_path, _local_store_path)
+                                 _dir_path, _read_dir)
 
     b = _InMemoryBackend(store_key="kernel")
     b.add("keep", "public cell", "note")
@@ -164,17 +164,17 @@ def test_set_private_moves_dialog_between_stores(tmp_path, monkeypatch):
 
     # Both public initially.
     assert not b.is_private("secret")
-    public = json.loads(_store_path("kernel").read_text())
+    public = _read_dir(_dir_path("kernel"))
     assert {"keep", "secret"} <= set(public)
-    assert not _local_store_path("kernel").exists()
+    assert not _dir_path("kernel", True).exists()
 
     # Flag "secret" local-only: it leaves the committed store for the overlay.
     assert b.set_private("secret") is True
     assert b.is_private("secret")
     assert _read_private_dialogs("kernel") == {"secret"}
-    public = json.loads(_store_path("kernel").read_text())
+    public = _read_dir(_dir_path("kernel"))
     assert "secret" not in public and "keep" in public
-    local = json.loads(_local_store_path("kernel").read_text())
+    local = _read_dir(_dir_path("kernel", True))
     assert "secret" in local
 
     # A fresh backend still loads both (public + overlay merged).
@@ -184,8 +184,8 @@ def test_set_private_moves_dialog_between_stores(tmp_path, monkeypatch):
     assert b.set_private("secret") is False
     assert not b.is_private("secret")
     assert _read_private_dialogs("kernel") == set()
-    assert "secret" in json.loads(_store_path("kernel").read_text())
-    assert not _local_store_path("kernel").exists()
+    assert "secret" in _read_dir(_dir_path("kernel"))
+    assert not _dir_path("kernel", True).exists()
 
 
 def test_private_flag_follows_rename_and_delete(tmp_path, monkeypatch):

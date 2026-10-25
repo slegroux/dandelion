@@ -18,6 +18,11 @@ def _fresh(monkeypatch):
     monkeypatch.setattr(client, "SNAPSHOT_KEEP", 20)
 
 
+def _f(name="d0", key="kernel"):
+    """The file one dialog is saved in."""
+    return client._dialog_file(client._dir_path(key), name)
+
+
 def _dialogs(n=3, tag="x"):
     return {f"d{i}": [Msg(f"m{i}", "note", f"{tag}{i}")] for i in range(n)}
 
@@ -46,32 +51,59 @@ def test_concurrent_saves_while_mutating_stay_valid(tmp_path, capsys):
         t.join()
     assert errors == []
     assert "could not save" not in capsys.readouterr().err
-    assert isinstance(json.loads(_store_path("kernel").read_text()), dict)
-    assert not list(tmp_path.glob("*.tmp"))
+    assert isinstance(client._read_layout("kernel"), dict)
+    assert not list(tmp_path.rglob("*.tmp"))
 
 
-def test_corrupt_store_restores_from_bak_and_keeps_damaged_copy(tmp_path):
+def test_corrupt_dialog_restores_from_bak_and_keeps_damaged_copy(tmp_path):
     _save_dialogs("kernel", _dialogs(tag="old"))
-    _save_dialogs("kernel", _dialogs(tag="new"))               # .bak now holds "old"
-    p = _store_path("kernel")
+    _save_dialogs("kernel", _dialogs(tag="new"))               # d0's .bak now holds "old"
+    p = _f()
     p.write_text('{"truncated": [')
     loaded = _load_dialogs("kernel")
     assert loaded["d0"][0].content == "old0"
-    assert json.loads(p.read_text())["d0"][0]["content"] == "old0"
+    assert loaded["d1"][0].content == "new1"                   # the others are untouched
+    assert json.loads(p.read_text())["msgs"][0]["content"] == "old0"
+    aside = list(p.parent.glob(f"{p.name}.corrupt-*"))
+    assert len(aside) == 1 and aside[0].read_text() == '{"truncated": ['
+    assert client.STORE_NOTICES and f"restored from {p.name}.bak" in client.STORE_NOTICES[0]
+
+
+def test_corrupt_store_restores_from_bak_and_keeps_damaged_copy(tmp_path):
+    p = _store_path("kernel")                                  # a store not yet split
+    p.write_text('{"d0": [{"id": "m0", "msg_type": "note", "content": "old0"}]}')
+    p.with_suffix(".json.bak").write_text(p.read_text())
+    p.write_text('{"truncated": [')
+    assert _load_dialogs("kernel")["d0"][0].content == "old0"
     aside = list(tmp_path.glob("dialogs-kernel.json.corrupt-*"))
     assert len(aside) == 1 and aside[0].read_text() == '{"truncated": ['
     assert client.STORE_NOTICES and "restored from dialogs-kernel.json.bak" in client.STORE_NOTICES[0]
 
 
-def test_corrupt_store_and_bak_fall_back_to_newest_good_snapshot(tmp_path, monkeypatch):
+def test_corrupt_dialog_and_bak_fall_back_to_newest_good_snapshot(tmp_path, monkeypatch):
     monkeypatch.setattr(client, "SNAPSHOT_MINUTES", 0)
     _save_dialogs("kernel", _dialogs(tag="a"))
     _save_dialogs("kernel", _dialogs(tag="b"))                 # snapshot of "a"
     _save_dialogs("kernel", _dialogs(tag="c"))                 # snapshot of "b"
-    p = _store_path("kernel")
+    p = _f()
     p.write_text("garbage")
     p.with_suffix(".json.bak").write_text("[]")                # not an object either
-    assert _load_dialogs("kernel")["d0"][0].content == "b0"
+    loaded = _load_dialogs("kernel")
+    assert loaded["d0"][0].content == "b0" and loaded["d2"][0].content == "c2"
+
+
+def test_corrupt_dialog_with_no_backup_is_left_out_not_the_others(tmp_path):
+    _save_dialogs("kernel", _dialogs(tag="a"))
+    p = _f("d1")
+    for b in [p.with_suffix(".json.bak"), *client._snapshots(p)]:
+        b.unlink(missing_ok=True)
+    p.write_text("{bad")
+    loaded = _load_dialogs("kernel")
+    assert sorted(loaded) == ["d0", "d2"]
+    assert next(p.parent.glob(f"{p.name}.corrupt-*")).read_text() == "{bad"
+    assert "no good backup" in client.STORE_NOTICES[0]
+    _save_dialogs("kernel", loaded)                            # saving never loses the damaged file
+    assert next(p.parent.glob(f"{p.name}.corrupt-*")).read_text() == "{bad"
 
 
 def test_corrupt_store_with_no_backup_starts_empty_but_preserves_it(tmp_path):
@@ -100,17 +132,17 @@ def test_unmovable_corrupt_store_raises_instead_of_being_overwritten(tmp_path, m
 def test_snapshots_are_throttled_pruned_and_only_of_good_stores(tmp_path, monkeypatch):
     for i in range(3):
         _save_dialogs("kernel", _dialogs(tag=str(i)))
-    assert len(client._snapshots(_store_path("kernel"))) == 1   # throttled to one
+    assert len(client._snapshots(_f())) == 1                   # throttled to one
     monkeypatch.setattr(client, "SNAPSHOT_MINUTES", 0)
     monkeypatch.setattr(client, "SNAPSHOT_KEEP", 3)
     for i in range(6):
         _save_dialogs("kernel", _dialogs(tag=f"k{i}"))
-    snaps = client._snapshots(_store_path("kernel"))
+    snaps = client._snapshots(_f())
     assert len(snaps) == 3
     assert all(isinstance(json.loads(s.read_text()), dict) for s in snaps)
-    _store_path("kernel").write_text("not json")
-    client._maybe_snapshot(_store_path("kernel"))              # damaged: not kept
-    assert all(isinstance(json.loads(s.read_text()), dict) for s in client._snapshots(_store_path("kernel")))
+    _f().write_text("not json")
+    client._maybe_snapshot(_f())                               # damaged: not kept
+    assert all(isinstance(json.loads(s.read_text()), dict) for s in client._snapshots(_f()))
 
 
 def test_page_shows_store_recovery_banner(monkeypatch):
@@ -147,7 +179,7 @@ def test_backup_skips_snapshots_damaged_files_and_pidfile(tmp_path, monkeypatch)
     (tmp_path / ".serve.pid").write_text("1")
     arc, _ = datadir.backup(tmp_path / "b.tar.gz")
     names = tarfile.open(arc).getnames()
-    assert "data/dialogs-kernel.json" in names
+    assert any(n.startswith("data/dialogs-kernel.d/d0~") for n in names)
     assert not any(n.startswith("data/backups/") or ".corrupt-" in n or n.endswith(".serve.pid")
                    for n in names)
 
@@ -159,13 +191,13 @@ def test_snapshots_never_cross_targets(tmp_path, monkeypatch):
     assert client._snapshots(_store_path("kernel")) == []
     _store_path("kernel").write_text("garbage")                   # no .bak for kernel
     assert _load_dialogs("kernel") == {}                          # not h100's notebook
-    assert len(client._snapshots(_store_path("kernel-h100"))) == 1
+    assert len(client._snapshots(_f("h", "kernel-h100"))) == 1
 
 
 def test_concurrent_loads_of_a_corrupt_store_recover_once(tmp_path):
     _save_dialogs("kernel", _dialogs(tag="good"))
-    _save_dialogs("kernel", _dialogs(tag="good"))
-    _store_path("kernel").write_text("{bad")
+    _f().with_suffix(".json.bak").write_text(_f().read_text())   # an unchanged dialog isn't rewritten
+    _f().write_text("{bad")
     results, errors = [], []
 
     def load():
@@ -180,7 +212,7 @@ def test_concurrent_loads_of_a_corrupt_store_recover_once(tmp_path):
         t.join()
     assert errors == []
     assert all(r["d0"][0].content == "good0" for r in results)
-    assert len(list(tmp_path.glob("dialogs-kernel.json.corrupt-*"))) == 1
+    assert len(list(_f().parent.glob("d0~*.corrupt-*"))) == 1
 
 
 def test_second_serve_does_not_clobber_live_pidfile(tmp_path, monkeypatch):
