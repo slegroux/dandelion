@@ -668,3 +668,30 @@ def test_two_processes_on_different_machines(tmp_path):
         for p in procs:
             if p.poll() is None:
                 p.kill()
+
+
+# ---- a missing store beside its backups is never loaded as empty -----------------
+def test_a_missing_store_with_a_bak_is_refused_on_a_non_default_root(root):
+    (root / "dialogs-kernel.json.bak").write_text('{"d": []}')
+    with pytest.raises(client.StoreUnreadable):
+        client._load_dialogs("kernel")
+
+
+def test_a_missing_store_with_a_bak_is_refused_on_a_symlinked_default_root(tmp_path, monkeypatch):
+    real = tmp_path / "mount"
+    real.mkdir()
+    cfg = datadir.config_dir()
+    cfg.parent.mkdir(parents=True)
+    cfg.symlink_to(real)                                         # the user's link into pCloud
+    monkeypatch.setenv("DANDELION_DATA", str(cfg))
+    (real / "dialogs-kernel.json.bak").write_text('{"d": []}')
+    with pytest.raises(client.StoreUnreadable):
+        client._wait_for_store(cfg / "dialogs-kernel.json")
+
+
+def test_a_missing_store_on_the_real_default_root_starts_empty(tmp_path, monkeypatch):
+    cfg = datadir.config_dir()
+    cfg.mkdir(parents=True)
+    monkeypatch.setenv("DANDELION_DATA", str(cfg))
+    (cfg / "dialogs-kernel.json.bak").write_text('{"d": []}')
+    client._wait_for_store(cfg / "dialogs-kernel.json")          # no raise
