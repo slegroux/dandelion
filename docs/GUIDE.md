@@ -115,6 +115,57 @@ Edit `targets.yaml` and set the `h100.ssh.host` to your H100 (an entry in
 > (add `solveit_client` to connect to a SolveIt server), then drop the `uv run`
 > prefix from the commands below.
 
+### Signing in to Claude
+
+The **Claude** models in Ask AI run through the `claude` CLI on your Claude Pro or
+Max plan, so they bill the plan, never API credits. Install
+[Claude Code](https://claude.com/claude-code), then sign in once:
+
+```bash
+claude auth login      # opens the browser
+claude auth status     # "loggedIn": true
+```
+
+**Make the sign-in last.** `claude auth login` keeps a short-lived session that the
+CLI renews in the background. A renewal can fail, for example when several
+`claude` processes renew at once, and Ask AI then answers
+`[Claude (Max plan) error: Failed to authenticate: OAuth session expired and could
+not be refreshed]` until you sign in again. A long-lived token avoids renewals:
+
+```bash
+claude setup-token     # opens the browser once, prints a token (sk-ant-oat01-…)
+# keep it in the Keychain rather than in a dotfile; a bare -w at the end prompts
+# for the token, so it stays out of your shell history:
+security add-generic-password -U -a "$USER" -s claude-oauth-token -w
+```
+
+The `claude` CLI uses the token when `CLAUDE_CODE_OAUTH_TOKEN` is set in its
+environment, and Dandelion passes its own environment on. So the variable has to
+be set where **Dandelion's servers start**, not only in your terminal:
+
+| You start Dandelion with | Put the line below in |
+|---|---|
+| `just start`, `just dev`, a terminal, a script or a coding agent | `~/.zshenv` (zsh reads it for every shell; `~/.zshrc` only for interactive ones) |
+| `Dandelion.app` | `~/.secrets.env` (apps opened from the Finder read no shell files; the launcher sources this one) |
+
+```bash
+[ -n "${CLAUDE_CODE_OAUTH_TOKEN-}" ] || export CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password -s claude-oauth-token -w 2>/dev/null)"
+```
+
+The token then applies to every `claude` you run, Claude Code in your terminal
+included, which is usually what you want. Over SSH the Keychain is locked and the
+variable stays empty; `claude` then falls back to `claude auth login`.
+
+Then restart Dandelion, from a **new** terminal (or after `source ~/.zshenv`):
+`just stop && just start`. Servers already running keep the environment they
+started with, and so does a terminal opened before the edit. With `Dandelion.app`,
+run `just stop`, then open the app again: it skips servers that are already up.
+**⚙ Settings** shows `✓ long-lived token set` once the servers have it. Settings
+can't tell whether the token still works; if Ask AI answers
+`Failed to authenticate. API Error: 401 OAuth access token is invalid`, the token
+has expired or been revoked: run `claude setup-token` again and store the new one
+with the same `security` command.
+
 ## The bundled kernel server
 
 Code runs on a small **kernel server** that ships with Dandelion and genuinely
@@ -142,7 +193,7 @@ DANDELION_TARGET=kernel uv run python -m dandelion.cli serve
 
 `just app` builds a double-click **`Dandelion.app`** launcher: it starts the
 kernel server and the UI (if not already running), then opens the browser to the
-app — quitting it stops the servers it launched. Drag it to `/Applications` and
+app; the servers keep running after that (stop them with `just stop`). Drag it to `/Applications` and
 your Dock. It's a thin launcher around the same servers (not a native wrapper),
 so it stays light; logs go to `~/Library/Logs/Dandelion/`. Re-run `just app`
 if you move the project (the path is baked into the bundle). To stop everything
@@ -451,7 +502,7 @@ envelope. After installing or changing Codex addons/plugins, start a new dialog
 or otherwise force a fresh Codex session if the current dialog is still
 resuming.
 
-#### The AI can edit cells (Max plan)
+#### The AI can edit cells
 
 Ask AI doesn't only *answer* — it can **edit the notebook for you**. Ask it to
 "fix the bug in **cell 3**," "vectorise this loop," or "add a test below," and it
@@ -460,7 +511,7 @@ to show the change. It runs through the local
 [MCP server](../server/mcp_cells.py) exposing `list_cells` / `update_cell` /
 `str_replace` / `insert_cell`. The tools are available to the Codex and Claude
 CLI model choices; Codex uses the installed `codex` CLI, while Claude uses your
-**Claude Max subscription** (no API credits) via the `claude` CLI.
+**Claude Pro or Max subscription** (no API credits) via the `claude` CLI.
 
 **Pointing it at a cell.** Each cell shows a small **number** in its gutter, and
 the AI sees that same number — every cell reaches it tagged `n="3" id="…"`. So

@@ -74,7 +74,7 @@ Then choose how Ask AI reaches a model, in **⚙ Settings**:
 
 | Route | You need | Billed |
 |---|---|---|
-| **Claude subscription** (Pro / Max) | the `claude` CLI, signed in (`claude auth login`) | your plan |
+| **Claude subscription** (Pro / Max) | the `claude` CLI, signed in (`claude auth login`; [make it last](docs/GUIDE.md#signing-in-to-claude)) | your plan |
 | **ChatGPT subscription** (Codex) | the `codex` CLI, signed in (`codex login`) | your plan |
 | **Claude API** or **GLM** | an API key, pasted in Settings | per token |
 
@@ -138,7 +138,7 @@ function links back to the cell you wrote it in.
 | **[Live values in prompts](docs/GUIDE.md#inject-live-values-into-a-prompt)** | `` $`df.shape` `` sends the real number |
 | **[Context you can see](docs/GUIDE.md#the-ai-sees-the-notebook)** | Per-cell token counts; mute a cell to drop it, pin one to keep it |
 | **[Three modes](docs/GUIDE.md#ai-modes--learning--concise--standard)** | learning, concise, standard |
-| **[Cell edits, not an agent](docs/GUIDE.md#the-ai-can-edit-cells-max-plan)** | Visible, in-notebook edits only; Write, Edit and Bash denied |
+| **[Cell edits, not an agent](docs/GUIDE.md#the-ai-can-edit-cells)** | Visible, in-notebook edits only; Write, Edit and Bash denied |
 | **[Rich output](docs/GUIDE.md#rich-output)** | Matplotlib, `_repr_html_` and `_repr_png_`, inline |
 | **[Jupyter keys](docs/GUIDE.md#keyboard-shortcuts-jupyter-style)** | Command and edit modes, `j`/`k`, `a`/`b`, `dd`, `z` |
 | **[Papers and web pages](docs/GUIDE.md#reading-papers-and-web-pages)** | marker for PDFs, trafilatura for articles, or one section at a time |
