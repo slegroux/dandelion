@@ -1807,6 +1807,43 @@ def test_stream_route_emits_deltas_and_persists_output(monkeypatch):
     assert app.STATE["pending_stream"] is None           # cleared on completion
 
 
+def test_stream_route_clears_live_set_on_finish_error_and_disconnect(monkeypatch):
+    import asyncio
+    import dandelion.app as app
+    app.STATE["dialog"] = "stream/live"
+    b = app.STATE["backend"]
+    b.messages("stream/live")
+    m = b.add("stream/live", "q?", "prompt", model="claude-opus-high")
+    key = ("stream/live", m.id)
+
+    def drain(resp, stop_after=None):
+        async def go():
+            n = 0
+            async for _ in resp.body_iterator:
+                n += 1
+                assert key in app._LIVE_ANSWER_STREAMS   # live while running
+                if stop_after and n >= stop_after:
+                    await resp.body_iterator.aclose()    # client disconnect
+                    return
+        asyncio.run(go())
+
+    monkeypatch.setattr(app, "stream_claude", lambda *a, **k: iter(["a", "b"]))
+    drain(app.stream_answer("stream/live", m.id))
+    assert key not in app._LIVE_ANSWER_STREAMS           # finished
+
+    def boom(*a, **k):
+        yield "a"
+        raise RuntimeError("cli died")
+    monkeypatch.setattr(app, "stream_claude", boom)
+    with pytest.raises(RuntimeError):
+        drain(app.stream_answer("stream/live", m.id))
+    assert key not in app._LIVE_ANSWER_STREAMS           # error
+
+    monkeypatch.setattr(app, "stream_claude", lambda *a, **k: iter(["a", "b", "c"]))
+    drain(app.stream_answer("stream/live", m.id), stop_after=1)
+    assert key not in app._LIVE_ANSWER_STREAMS           # disconnect
+
+
 def test_stream_route_uses_codex_streamer(monkeypatch):
     import asyncio
     import dandelion.app as app
@@ -2988,6 +3025,139 @@ def test_internal_cell_insert_after():
     assert [c.content for c in bk.messages(d)] == ["first", "second", "third"]
 
 
+def _prompt_with_answer(bk, d, question="q?", answer="old answer"):
+    m = bk.add(d, question, "prompt")
+    bk.update_output(d, m.id, answer)
+    return m
+
+
+def test_internal_cell_update_output_edits_prompt_answer():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/out"; bk.messages(d)
+    m = _prompt_with_answer(bk, d)
+    app.STATE["cells_dirty"] = False
+    r = client.post("/internal/cell/update",
+                    data={"dialog": d, "id": m.id, "content": "new answer",
+                          "field": "output", "tok": tok})
+    assert r.json()["ok"] is True
+    cell = bk.messages(d)[-1]
+    assert cell.output == "new answer" and cell.content == "q?"   # question untouched
+    assert app.STATE["cells_dirty"] is True
+
+
+def test_internal_str_replace_output_edits_answer():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/outsr"; bk.messages(d)
+    m = _prompt_with_answer(bk, d, answer="graph A\ngraph B")
+    dup = client.post("/internal/cell/str_replace",       # unique-match rule applies
+                      data={"dialog": d, "id": m.id, "old": "graph", "new": "x",
+                            "field": "output", "tok": tok})
+    assert dup.status_code == 400 and "unique" in dup.json()["error"]
+    assert bk.messages(d)[-1].output == "graph A\ngraph B"
+    r = client.post("/internal/cell/str_replace",
+                    data={"dialog": d, "id": m.id, "old": "graph A", "new": "schemdraw",
+                          "field": "output", "tok": tok})
+    assert r.json()["ok"] is True
+    assert bk.messages(d)[-1].output == "schemdraw\ngraph B"
+
+
+def test_internal_output_edit_refused_for_code_cell():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/outcode"; bk.messages(d)
+    m = bk.add(d, "x = 1", "code")
+    for path, extra in (("update", {"content": "z"}), ("str_replace", {"old": "x", "new": "y"})):
+        r = client.post(f"/internal/cell/{path}",
+                        data={"dialog": d, "id": m.id, "field": "output", "tok": tok, **extra})
+        assert r.status_code == 400 and "prompt" in r.json()["error"]
+    assert bk.messages(d)[-1].output in ("", None)
+
+
+def test_internal_output_edit_refused_while_streaming():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/outstream"; bk.messages(d)
+    m = _prompt_with_answer(bk, d)
+    prev = app.STATE.get("pending_stream")
+    app.STATE["pending_stream"] = (d, m.id)
+    try:
+        for path, extra in (("update", {"content": "z"}), ("str_replace", {"old": "old", "new": "n"})):
+            r = client.post(f"/internal/cell/{path}",
+                            data={"dialog": d, "id": m.id, "field": "output", "tok": tok, **extra})
+            assert r.status_code == 400 and "streaming" in r.json()["error"]
+        assert bk.messages(d)[-1].output == "old answer"
+        # the same cell's SOURCE is still editable; only the answer is protected
+        ok = client.post("/internal/cell/update",
+                         data={"dialog": d, "id": m.id, "content": "q2?", "tok": tok})
+        assert ok.json()["ok"] is True
+    finally:
+        app.STATE["pending_stream"] = prev
+
+
+def test_internal_output_edit_refused_for_overlapping_live_stream():
+    # pending_stream names only the LATEST send; an earlier answer still streaming
+    # must stay protected via the live set.
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/outlive"; bk.messages(d)
+    a = _prompt_with_answer(bk, d)
+    b = _prompt_with_answer(bk, d, question="q2?")
+    prev = app.STATE.get("pending_stream")
+    app.STATE["pending_stream"] = (d, b.id)
+    app._stream_live_add(d, a.id)
+    try:
+        r = client.post("/internal/cell/update",
+                        data={"dialog": d, "id": a.id, "content": "z", "field": "output", "tok": tok})
+        assert r.status_code == 400 and "streaming" in r.json()["error"]
+        assert bk.messages(d)[-2].output == "old answer"
+    finally:
+        app._stream_live_discard(d, a.id)
+        app.STATE["pending_stream"] = prev
+    ok = client.post("/internal/cell/update",           # once the stream is over, editable
+                     data={"dialog": d, "id": a.id, "content": "z", "field": "output", "tok": tok})
+    assert ok.json()["ok"] is True
+
+
+def test_internal_output_edit_refused_without_update_output_backend():
+    app, client, tok = _mcp_client()
+    real = app.STATE["backend"]; d = "mcp/outnobk"; real.messages(d)
+    m = _prompt_with_answer(real, d)
+
+    class NoOutputBackend:                               # has update, lacks update_output
+        messages = staticmethod(real.messages)
+        update = staticmethod(real.update)
+    app.STATE["backend"] = NoOutputBackend()
+    try:
+        r = client.post("/internal/cell/update",
+                        data={"dialog": d, "id": m.id, "content": "z", "field": "output", "tok": tok})
+        assert r.status_code == 400 and "can't edit" in r.json()["error"]
+    finally:
+        app.STATE["backend"] = real
+    assert real.messages(d)[-1].output == "old answer"
+
+
+def test_internal_cell_edit_bad_field_rejected():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badfield"; bk.messages(d)
+    m = bk.add(d, "keep", "code")
+    for path, extra in (("update", {"content": "z"}), ("str_replace", {"old": "keep", "new": "z"})):
+        r = client.post(f"/internal/cell/{path}",
+                        data={"dialog": d, "id": m.id, "field": "bogus", "tok": tok, **extra})
+        assert r.status_code == 400 and "field" in r.json()["error"]
+    assert bk.messages(d)[-1].content == "keep"
+
+
+def test_internal_cell_edit_default_field_still_edits_content():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/deffield"; bk.messages(d)
+    m = _prompt_with_answer(bk, d, question="old q")
+    r = client.post("/internal/cell/update",
+                    data={"dialog": d, "id": m.id, "content": "new q", "tok": tok})
+    assert r.json()["ok"] is True
+    cell = bk.messages(d)[-1]
+    assert cell.content == "new q"
+    r = client.post("/internal/cell/str_replace",
+                    data={"dialog": d, "id": m.id, "old": "new", "new": "newer", "tok": tok})
+    assert r.json()["ok"] is True and bk.messages(d)[-1].content == "newer q"
+
+
 def test_cells_dirty_mark_during_stream_survives_to_consume():
     """The stream generator resets cells_dirty at the start of a turn; an MCP cell
     edit on another thread mid-turn must still be seen by the end-of-turn consume."""
@@ -3065,6 +3235,49 @@ def test_mcp_read_cell_unknown_id_raises(monkeypatch):
     monkeypatch.setattr(mc, "_request", lambda *a, **k: {"ok": True, "cells": []})
     with pytest.raises(RuntimeError):
         mc._call_tool("read_cell", {"cell_id": "nope"})
+
+
+def test_mcp_field_output_is_forwarded(monkeypatch):
+    import server.mcp_cells as mc
+    calls = []
+    monkeypatch.setattr(mc, "_request", lambda m, p, params: calls.append((p, params)) or {"ok": True})
+    mc._call_tool("update_cell", {"cell_id": "_a", "content": "ans", "field": "output"})
+    assert calls[-1] == ("/internal/cell/update",
+                         {"id": "_a", "content": "ans", "field": "output"})
+    mc._call_tool("str_replace", {"cell_id": "_a", "old_str": "a", "new_str": "b", "field": "output"})
+    assert calls[-1][0] == "/internal/cell/str_replace" and calls[-1][1]["field"] == "output"
+    mc._call_tool("update_cell", {"cell_id": "_a", "content": "src"})   # omitted -> content
+    assert calls[-1][1]["field"] == "content"
+
+
+def test_mcp_field_enum_on_edit_and_read_tools():
+    import server.mcp_cells as mc
+    by_name = {t["name"]: t for t in mc.TOOLS}
+    for name in ("update_cell", "str_replace", "read_cell"):
+        prop = by_name[name]["inputSchema"]["properties"]["field"]
+        assert prop["enum"] == ["content", "output"] and prop["default"] == "content"
+        assert "field" not in by_name[name]["inputSchema"]["required"]
+
+
+def test_mcp_cell_block_shows_prompt_answer_only_for_prompts():
+    import server.mcp_cells as mc
+    p = mc._cell_block(1, {"id": "_p", "type": "prompt", "content": "why?", "output": "because"})
+    assert "why?" in p and "--- answer ---\nbecause" in p
+    c = mc._cell_block(2, {"id": "_c", "type": "code", "content": "x=1", "output": "stdout"})
+    assert "answer" not in c and "stdout" not in c
+    empty = mc._cell_block(3, {"id": "_e", "type": "prompt", "content": "q", "output": ""})
+    assert "answer" not in empty
+
+
+def test_mcp_answer_truncates_in_list_but_read_cell_output_is_full(monkeypatch):
+    import server.mcp_cells as mc
+    big = "A" * (mc._LIST_CELL_CAP + 500)
+    cells = [{"id": "_p", "type": "prompt", "content": "short q", "output": big}]
+    monkeypatch.setattr(mc, "_request", lambda *a, **k: {"ok": True, "cells": cells})
+    listed = mc._call_tool("list_cells", {})
+    assert "short q" in listed and big not in listed
+    assert "…(truncated" in listed and 'field="output"' in listed   # hint points at read_cell
+    assert mc._call_tool("read_cell", {"cell_id": "_p", "field": "output"}) == big
 
 
 def test_mcp_read_cell_is_allowed_for_both_clis():
@@ -3747,3 +3960,49 @@ def test_library_use_button_kernel_only(tmp_path, monkeypatch):
     libraries.add("mylib", path=str(tmp_path / "mylib"))
     monkeypatch.setitem(app.STATE, "backend", MockBackend())   # no add_syspath
     assert "Use in kernel" not in to_xml(app.LibrariesPage())
+
+
+def test_ai_edited_answer_shows_badge_until_user_saves():
+    from fasthtml.common import to_xml
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badge"; bk.messages(d)
+    app.STATE["dialog"] = d
+    m = _prompt_with_answer(bk, d)
+    assert "edited by AI" not in to_xml(app._answer_view(m))
+    r = client.post("/internal/cell/update",
+                    data={"dialog": d, "id": m.id, "content": "new answer",
+                          "field": "output", "tok": tok})
+    assert r.json()["ok"] is True
+    assert "edited by AI" in to_xml(app._answer_view(bk.messages(d)[-1]))
+    app.cell_answer_save(id=m.id, output="mine")          # the user's own edit clears it
+    assert "edited by AI" not in to_xml(app._answer_view(bk.messages(d)[-1]))
+
+
+def test_ai_edited_badge_not_set_for_content_edit_and_cleared_by_reask():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badge2"; bk.messages(d)
+    app.STATE["dialog"] = d
+    m = _prompt_with_answer(bk, d, answer="graph A")
+    client.post("/internal/cell/update",
+                data={"dialog": d, "id": m.id, "content": "q2?", "tok": tok})
+    assert not app._ai_edited(d, m.id)                    # question edits don't mark
+    bk.update_output(d, m.id, "graph A")                  # a question edit may clear the answer
+    client.post("/internal/cell/str_replace",
+                data={"dialog": d, "id": m.id, "old": "graph A", "new": "B",
+                      "field": "output", "tok": tok})
+    assert app._ai_edited(d, m.id)
+    app._set_pending_stream(d, m.id)                      # re-ask replaces the answer
+    assert not app._ai_edited(d, m.id)
+    app._clear_pending_stream(d, m.id)
+
+
+def test_ai_edited_badge_cleared_by_non_streaming_reask():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badge3"; bk.messages(d)
+    app.STATE["dialog"] = d
+    m = _prompt_with_answer(bk, d)
+    client.post("/internal/cell/update",
+                data={"dialog": d, "id": m.id, "content": "edited", "field": "output", "tok": tok})
+    assert app._ai_edited(d, m.id)
+    app.cell_exec(id=m.id)                                # mock backend: no streaming path
+    assert not app._ai_edited(d, m.id)

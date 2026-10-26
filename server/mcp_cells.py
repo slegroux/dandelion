@@ -32,14 +32,26 @@ TOKEN = os.environ.get("DANDELION_MCP_TOKEN", "")
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_INFO = {"name": "dandelion-cells", "version": "0.1.0"}
 
+# Shared by read_cell / update_cell / str_replace: which part of a cell to act on.
+_FIELD_PROP = {
+    "enum": ["content", "output"],
+    "default": "content",
+    "description": (
+        "'content' (default) is the cell's source. 'output' is a prompt cell's AI "
+        "answer (or a code cell's output, readable but not editable); edit it only "
+        "on a prompt cell, and only when the user explicitly asks to change that answer."
+    ),
+}
+
 TOOLS = [
     {
         "name": "list_cells",
         "description": (
             "List the notebook's cells in order with their id, type (code/note/"
-            "prompt), and current source. Call this first to get the exact cell "
-            "id and text before editing. Very long cells are truncated in this "
-            "overview — use read_cell to get one cell's complete source."
+            "prompt), and current source; a prompt cell also shows its AI answer. "
+            "Call this first to get the exact cell id and text before editing. "
+            "Very long cells are truncated in this overview — use read_cell to "
+            "get one cell's complete source."
         ),
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
@@ -48,23 +60,29 @@ TOOLS = [
         "description": (
             "Return ONE cell's complete, untruncated source. Use this when a cell "
             "shows '…(truncated)' in list_cells and you need its full text — e.g. "
-            "before a str_replace on a long cell."
+            "before a str_replace on a long cell. Pass field='output' for a prompt "
+            "cell's complete AI answer (or a code cell's output)."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {"cell_id": {"type": "string", "description": "id from list_cells"}},
+            "properties": {"cell_id": {"type": "string", "description": "id from list_cells"},
+                           "field": _FIELD_PROP},
             "required": ["cell_id"],
             "additionalProperties": False,
         },
     },
     {
         "name": "update_cell",
-        "description": "Replace a cell's entire source with new content.",
+        "description": (
+            "Replace a cell's entire source with new content (or, with "
+            "field='output', a prompt cell's entire AI answer)."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "cell_id": {"type": "string", "description": "id from list_cells"},
-                "content": {"type": "string", "description": "the new full source"},
+                "content": {"type": "string", "description": "the new full text"},
+                "field": _FIELD_PROP,
             },
             "required": ["cell_id", "content"],
             "additionalProperties": False,
@@ -73,8 +91,9 @@ TOOLS = [
     {
         "name": "str_replace",
         "description": (
-            "Replace an exact substring in a cell's source. old_str must match "
-            "exactly once (include enough surrounding text to be unique)."
+            "Replace an exact substring in a cell's source (or, with field='output', "
+            "in a prompt cell's AI answer). old_str must match exactly once "
+            "(include enough surrounding text to be unique)."
         ),
         "inputSchema": {
             "type": "object",
@@ -82,6 +101,7 @@ TOOLS = [
                 "cell_id": {"type": "string"},
                 "old_str": {"type": "string"},
                 "new_str": {"type": "string"},
+                "field": _FIELD_PROP,
             },
             "required": ["cell_id", "old_str", "new_str"],
             "additionalProperties": False,
@@ -137,7 +157,14 @@ def _cell_block(i: int, c: dict, cap: int | None = None) -> str:
         src = src[:cap] + f"\n…(truncated at {cap} chars — call read_cell with " \
                           f"id={c.get('id')} for the full source)"
     head = f"cell {i}  id={c.get('id')}  type={c.get('type')}"
-    return f"{head}\n{src}" if src else f"{head}\n(empty)"
+    block = f"{head}\n{src}" if src else f"{head}\n(empty)"
+    ans = (c.get("output") or "").rstrip() if c.get("type") == "prompt" else ""
+    if ans:                                     # a prompt's AI answer, capped on its own
+        if cap is not None and len(ans) > cap:
+            ans = ans[:cap] + f"\n…(truncated at {cap} chars — call read_cell with " \
+                              f"cell_id={c.get('id')} field=\"output\" for the full answer)"
+        block += f"\n--- answer ---\n{ans}"
+    return block
 
 
 def _fmt_cells(cells: list) -> str:
@@ -158,14 +185,18 @@ def _call_tool(name: str, args: dict) -> str:
         cid = args["cell_id"]
         for i, c in enumerate(r.get("cells", []), 1):
             if c.get("id") == cid:
+                if args.get("field") == "output":   # a prompt's AI answer, uncapped
+                    return (c.get("output") or "").rstrip() or "(empty)"
                 return _cell_block(i, c)            # no cap -> full source
         raise RuntimeError(f"no cell {cid}")
     if name == "update_cell":
         r = _request("POST", "/internal/cell/update",
-                     {"id": args["cell_id"], "content": args.get("content", "")})
+                     {"id": args["cell_id"], "content": args.get("content", ""),
+                      "field": args.get("field", "content")})
     elif name == "str_replace":
         r = _request("POST", "/internal/cell/str_replace",
-                     {"id": args["cell_id"], "old": args["old_str"], "new": args["new_str"]})
+                     {"id": args["cell_id"], "old": args["old_str"], "new": args["new_str"],
+                      "field": args.get("field", "content")})
     elif name == "insert_cell":
         r = _request("POST", "/internal/cell/insert",
                      {"content": args.get("content", ""),
