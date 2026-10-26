@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import codecs
 import ctypes
 import hmac
 import io
@@ -39,7 +40,13 @@ import linecache
 import os
 import re
 import contextlib
+import functools
+import shutil
+import signal
+import subprocess
+import sys
 import threading
+import time
 import warnings
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -271,6 +278,90 @@ def _cell_filename(code: str) -> str:
     return name
 
 
+_BANG_ASSIGN = re.compile(r"^(\s*)([A-Za-z_]\w*)\s*=\s*!(.*)$")
+_BANG_LINE = re.compile(r"^(\s*)!(?!=)(.*)$")
+
+
+def _bang_rewrite(code: str) -> str | None:
+    """Rewrite `!cmd` / `x = !cmd` lines into `__dandelion_sh__(...)` calls, one line
+    in and one line out so line numbers do not move. None when there is no such line."""
+    out, found = [], False
+    for line in code.split("\n"):
+        m = _BANG_ASSIGN.match(line)
+        if m:
+            line = f"{m[1]}{m[2]} = __dandelion_sh__({m[3]!r}, capture=True)"
+            found = True
+        else:
+            m = _BANG_LINE.match(line)
+            if m:
+                line = f"{m[1]}__dandelion_sh__({m[2]!r})"
+                found = True
+        out.append(line)
+    return "\n".join(out) if found else None
+
+
+def _sh_env() -> dict:
+    """Environment for a `!` child: the kernel's own python/pip first on PATH."""
+    env = dict(os.environ)
+    env["PATH"] = os.path.dirname(sys.executable) + os.pathsep + env.get("PATH", "")
+    if sys.prefix != sys.base_prefix:
+        env["VIRTUAL_ENV"] = sys.prefix
+    env.update(PYTHONUNBUFFERED="1", NO_COLOR="1", TERM="dumb")
+    return env
+
+
+def _sh(cmd: str, capture: bool = False, ns: dict | None = None):
+    """Run `cmd` through bash, streaming its output into the cell's stdout (or
+    returning it as a list of lines when `capture`). The wait loop polls so the
+    async /exec_stop (KeyboardInterrupt) can land; the child's process group is
+    then killed."""
+    out = sys.stdout
+    chunks: list[str] = []
+    sink = chunks.append if capture else out.write
+    proc = subprocess.Popen(
+        [shutil.which("bash") or "/bin/sh", "-c", cmd],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+        start_new_session=True, env=_sh_env())
+
+    def _read() -> None:
+        dec = codecs.getincrementaldecoder("utf-8")(errors="replace")
+        while True:
+            data = proc.stdout.read1(4096)
+            if not data:
+                break
+            sink(dec.decode(data))
+        tail = dec.decode(b"", final=True)
+        if tail:
+            sink(tail)
+
+    reader = threading.Thread(target=_read, daemon=True)
+    reader.start()
+    try:
+        while proc.poll() is None:
+            time.sleep(0.05)
+    except BaseException:
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                break
+            try:
+                proc.wait(timeout=2)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        reader.join(timeout=2)
+        raise
+    reader.join()
+    if ns is not None:
+        ns["_exit_code"] = proc.returncode
+    if proc.returncode:
+        out.write(f"[exit {proc.returncode}]\n")
+    if capture:
+        return "".join(chunks).splitlines()
+    return None
+
+
 def _execute(dialog: str, code: str, buf: io.StringIO, rich_out: list) -> str | None:
     """Core execution shared by the sync (`run_code`) and async (`exec_start`)
     paths. Parses `code`, execs it into the dialog namespace, evals a trailing
@@ -283,14 +374,25 @@ def _execute(dialog: str, code: str, buf: io.StringIO, rich_out: list) -> str | 
     caught here — it propagates to the caller so the async worker can mark the run
     interrupted; this matches the original run_code, which never caught it either.
     """
+    run_code_src = code
     try:
         tree = ast.parse(code, mode="exec")
     except SyntaxError as e:
-        buf.write(f"SyntaxError: {e}")
-        return f"SyntaxError: {e}"
-    last_expr = _split_last_expr(code, tree)
-    filename = _cell_filename(code)
+        rewritten = _bang_rewrite(code)
+        tree = None
+        if rewritten is not None:
+            try:
+                tree = ast.parse(rewritten, mode="exec")
+                run_code_src = rewritten
+            except SyntaxError:
+                pass
+        if tree is None:
+            buf.write(f"SyntaxError: {e}")
+            return f"SyntaxError: {e}"
+    last_expr = _split_last_expr(run_code_src, tree)
+    filename = _cell_filename(code)       # the ORIGINAL source: tracebacks show `!ls`
     ns = _ns(dialog)
+    ns["__dandelion_sh__"] = functools.partial(_sh, ns=ns)
     err = None
     try:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf), \

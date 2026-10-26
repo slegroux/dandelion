@@ -146,6 +146,15 @@ function links back to the cell you wrote it in.
 | **[Saved and portable](docs/GUIDE.md#your-work-is-saved)** | Rolling backups, corrupt-file recovery, `just backup` / `just restore` |
 | **Export** | Any dialog as `.ipynb` or markdown |
 
+## Shell commands
+
+A code-cell line starting with `!` runs as a shell command on whatever machine the
+kernel is on (your Mac, or the H100 over the tunnel), and its output streams into the
+cell. `x = !cmd` (e.g. `files = !ls`) captures stdout as a list of lines instead. `!python` and `!pip`
+mean the kernel's own environment (`!pip install ...`). Stop kills the command; a non-zero exit prints
+`[exit N]` and sets `_exit_code`. Stdin is closed, so interactive prompts get EOF.
+There is no `{var}` interpolation or `%cd` (use `os.chdir`). Kernel backend only.
+
 ## Laptop or H100
 
 A target is just the server URL the client points at, defined in
