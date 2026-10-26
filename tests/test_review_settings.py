@@ -139,7 +139,7 @@ def test_settings_shows_both_sections(monkeypatch):
     assert "Subscription" in html and "API keys" in html and "billed per token" in html
     assert "signed in · Max plan · a@b.c" in html
     assert "never bill API credits" in html
-    assert "If Ask AI reports an expired session, run claude auth login." in html
+    assert "If Ask AI reports an expired session, run claude auth login. claude setup-token" in html
     assert "codex CLI not installed" in html
     assert "<optgroup" in html
 
@@ -162,6 +162,15 @@ def test_settings_claude_non_plan_method_warns_without_billing_note(monkeypatch)
     assert "signed in with api_key" in html and "not a plan" in html
     assert "never bill API credits" not in html and "signed in · " not in html
     assert 'prov-status warn' in html
+    assert "setup-token" not in html
+
+
+def test_settings_claude_long_lived_token_is_on_plan(monkeypatch):
+    # `claude setup-token` reports authMethod "oauth_token" and no plan or email.
+    html = _render(monkeypatch, {**MAX, "plan": "", "email": "", "method": "oauth_token"}, NO_CODEX)
+    assert "✓ long-lived token set" in html and "not a plan" not in html
+    assert "never bill API credits" in html
+    assert "run claude setup-token again" in html
 
 
 def test_settings_codex_api_key_is_warn(monkeypatch):

@@ -2142,8 +2142,11 @@ def SettingsPage(saved=False, data_msg=None):
 
     cst, xst = _auth_probes()
     plan = (cst["plan"] or "").capitalize()
-    on_plan = cst["method"] == "claude.ai" or (not cst["method"] and bool(plan))
-    if on_plan:
+    token = cst["method"] == "oauth_token"      # `claude setup-token`: billed to the plan too
+    on_plan = token or cst["method"] == "claude.ai" or (not cst["method"] and bool(plan))
+    if token:   # `claude auth status` only sees that the token is set, not that it works
+        claude_in = ("✓ long-lived token set", "ok")
+    elif on_plan:
         claude_in = ("✓ signed in" + (f" · {plan} plan" if plan else "") + (
             f" · {cst['email']}" if cst["email"] else ""), "ok")
     else:
@@ -2155,6 +2158,13 @@ def SettingsPage(saved=False, data_msg=None):
                 }.get(xst["method"], ("✓ signed in", "ok"))
     xstatus, xcls = _card_state(xst, "codex CLI", codex_in)
     signed_in_claude = cst["installed"] and cst["logged_in"]
+    claude_extra = ""
+    if signed_in_claude and token:
+        claude_extra = ("If Ask AI reports an invalid token, it has expired or been revoked: "
+                        "run claude setup-token again.")
+    elif signed_in_claude:
+        claude_extra = "If Ask AI reports an expired session, run claude auth login." + (
+            " claude setup-token makes the sign-in last (guide: Signing in to Claude)." if on_plan else "")
     plan_cards = [
         _plan_card("Claude subscription (Pro / Max)", via="claude CLI", st=cst,
                    status=cstatus, status_cls=ccls, login_cmd="claude auth login",
@@ -2163,8 +2173,7 @@ def SettingsPage(saved=False, data_msg=None):
                    used_by="the “Claude · Fable / Sonnet / Opus” models",
                    note=("Dandelion hides ANTHROPIC_API_KEY from these calls, so they always use "
                          "your plan and never bill API credits.") if signed_in_claude and on_plan else "",
-                   extra=("If Ask AI reports an expired session, run claude auth login."
-                          if signed_in_claude else "")),
+                   extra=claude_extra),
         _plan_card("ChatGPT subscription (Plus / Pro)", via="codex CLI", st=xst,
                    status=xstatus, status_cls=xcls, login_cmd="codex login", check_cmd="codex login status",
                    install_hint="Install the Codex CLI (npm i -g @openai/codex), then sign in with: codex login",
