@@ -60,6 +60,12 @@ try:
     from pygments.lexers import get_lexer_by_name, PythonLexer
     from pygments.formatters import HtmlFormatter
     from pygments.util import ClassNotFound
+    from pygments.lexer import inherit as _inherit
+    from pygments.token import Comment as _Comment
+
+    class _ShellPythonLexer(PythonLexer):
+        """Python, plus `!cmd` shell lines (run by the kernel) as one command token."""
+        tokens = {"root": [(r"^[ \t]*!(?!=).*\n?", _Comment.Preproc), _inherit]}  # noqa: RUF012
 
     # Token.Error maps to "" in both themes below: a lexer emits Error for any
     # char it can't tokenise (box-drawing, math, arrows), which is what ASCII-art
@@ -139,7 +145,7 @@ try:
         notebook); an unknown language → plain text. `fmt` selects the palette,
         defaulting to the class-based, theme-following style of runnable cells."""
         try:
-            lexer = get_lexer_by_name(lang) if lang else PythonLexer()
+            lexer = get_lexer_by_name(lang) if lang not in ("", "python") else _ShellPythonLexer()
         except ClassNotFound:
             lexer = get_lexer_by_name("text")
         return _pyg_highlight(src or "", lexer, fmt or _pyg_fmt)
