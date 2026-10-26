@@ -898,3 +898,5 @@ select.msel:hover{background-color:var(--hover);color:var(--ink)}
   .md .highlight pre{color:#2B2A27;border:none}
   .md .highlight .copy-btn{color:#66635B;border-color:#E4E1D8;background:#FAF9F5}
 }
+
+.tag.ai-edited{margin-left:6px;color:var(--muted);background:none;border:1px solid var(--line);font-weight:500}

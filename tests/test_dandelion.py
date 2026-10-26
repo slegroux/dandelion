@@ -3960,3 +3960,49 @@ def test_library_use_button_kernel_only(tmp_path, monkeypatch):
     libraries.add("mylib", path=str(tmp_path / "mylib"))
     monkeypatch.setitem(app.STATE, "backend", MockBackend())   # no add_syspath
     assert "Use in kernel" not in to_xml(app.LibrariesPage())
+
+
+def test_ai_edited_answer_shows_badge_until_user_saves():
+    from fasthtml.common import to_xml
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badge"; bk.messages(d)
+    app.STATE["dialog"] = d
+    m = _prompt_with_answer(bk, d)
+    assert "edited by AI" not in to_xml(app._answer_view(m))
+    r = client.post("/internal/cell/update",
+                    data={"dialog": d, "id": m.id, "content": "new answer",
+                          "field": "output", "tok": tok})
+    assert r.json()["ok"] is True
+    assert "edited by AI" in to_xml(app._answer_view(bk.messages(d)[-1]))
+    app.cell_answer_save(id=m.id, output="mine")          # the user's own edit clears it
+    assert "edited by AI" not in to_xml(app._answer_view(bk.messages(d)[-1]))
+
+
+def test_ai_edited_badge_not_set_for_content_edit_and_cleared_by_reask():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badge2"; bk.messages(d)
+    app.STATE["dialog"] = d
+    m = _prompt_with_answer(bk, d, answer="graph A")
+    client.post("/internal/cell/update",
+                data={"dialog": d, "id": m.id, "content": "q2?", "tok": tok})
+    assert not app._ai_edited(d, m.id)                    # question edits don't mark
+    bk.update_output(d, m.id, "graph A")                  # a question edit may clear the answer
+    client.post("/internal/cell/str_replace",
+                data={"dialog": d, "id": m.id, "old": "graph A", "new": "B",
+                      "field": "output", "tok": tok})
+    assert app._ai_edited(d, m.id)
+    app._set_pending_stream(d, m.id)                      # re-ask replaces the answer
+    assert not app._ai_edited(d, m.id)
+    app._clear_pending_stream(d, m.id)
+
+
+def test_ai_edited_badge_cleared_by_non_streaming_reask():
+    app, client, tok = _mcp_client()
+    bk = app.STATE["backend"]; d = "mcp/badge3"; bk.messages(d)
+    app.STATE["dialog"] = d
+    m = _prompt_with_answer(bk, d)
+    client.post("/internal/cell/update",
+                data={"dialog": d, "id": m.id, "content": "edited", "field": "output", "tok": tok})
+    assert app._ai_edited(d, m.id)
+    app.cell_exec(id=m.id)                                # mock backend: no streaming path
+    assert not app._ai_edited(d, m.id)

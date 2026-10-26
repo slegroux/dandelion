@@ -403,6 +403,7 @@ def _consume_cells_dirty() -> bool:
 def _set_pending_stream(dialog: str, mid: str) -> None:
     with _STATE_LOCK:
         STATE["pending_stream"] = (dialog, mid)
+        _AI_EDITED_ANSWERS.discard((dialog, mid))   # a fresh answer replaces the edit
 
 
 def _clear_pending_stream(dialog: str, mid: str) -> None:
@@ -425,6 +426,27 @@ def _stream_live_add(dialog: str, mid: str) -> None:
 def _stream_live_discard(dialog: str, mid: str) -> None:
     with _STATE_LOCK:
         _LIVE_ANSWER_STREAMS.discard((dialog, mid))
+
+
+# Answers the AI rewrote in place through the cell tools (`field="output"`). Shown
+# with an "edited by AI" badge until the user saves their own edit or re-asks. Held
+# in memory only: it marks a recent silent change, not a permanent provenance record.
+_AI_EDITED_ANSWERS: set = set()
+
+
+def _ai_edited_mark(dialog: str, mid: str) -> None:
+    with _STATE_LOCK:
+        _AI_EDITED_ANSWERS.add((dialog, mid))
+
+
+def _ai_edited_clear(dialog: str, mid: str) -> None:
+    with _STATE_LOCK:
+        _AI_EDITED_ANSWERS.discard((dialog, mid))
+
+
+def _ai_edited(dialog: str, mid: str) -> bool:
+    with _STATE_LOCK:
+        return (dialog, mid) in _AI_EDITED_ANSWERS
 
 
 def _answer_streaming(dialog: str, mid: str) -> bool:
@@ -1061,7 +1083,10 @@ def _answer_view(m):
         bubble = Div(inner, cls="bubble md clickedit", **edit)
     else:
         bubble = Div(inner, cls="bubble md")
-    return Div(Div(Span(who, cls="tag"), cls="who"), bubble,
+    badge = (Span("edited by AI", cls="tag ai-edited",
+                  title="the AI rewrote this answer at your request; edit or re-ask to clear")
+             if _ai_edited(cur("dialog"), m.id) else "")
+    return Div(Div(Span(who, cls="tag"), badge, cls="who"), bubble,
                cls="answer", id=f"answer-{m.id}")
 
 
@@ -3452,6 +3477,7 @@ def cell_run(id: str, content: str = ""):
     if hasattr(backend, "update"):
         backend.update(cur("dialog"), id, content)
     m = _msg_by_id(backend, cur("dialog"), id)
+    _ai_edited_clear(cur("dialog"), id)                 # a re-run replaces the edited answer
     _apply_selected_model(backend, cur("dialog"), m)    # picker is authoritative on run
     if m is not None and m.msg_type == "prompt" and _can_stream(backend, m.model):
         _set_pending_stream(cur("dialog"), id)          # re-ask, streamed live
@@ -3696,8 +3722,10 @@ def internal_cell_update(dialog: str, id: str, content: str = "", field: str = "
         return deny
     if field == "output":
         backend.update_output(dialog, id, content)
+        _ai_edited_mark(dialog, id)
     else:
         backend.update(dialog, id, content)
+        _ai_edited_clear(dialog, id)                    # a source edit blanks the answer
     _mark_cells_dirty()
     return _json({"ok": True, "message": f"updated cell {id}"})
 
@@ -3721,8 +3749,10 @@ def internal_cell_str_replace(dialog: str, id: str, old: str = "", new: str = ""
         return _json({"ok": False, "error": f"old_str matches {n}× (must be unique)"}, 400)
     if field == "output":
         backend.update_output(dialog, id, src.replace(old, new))
+        _ai_edited_mark(dialog, id)
     else:
         backend.update(dialog, id, src.replace(old, new))
+        _ai_edited_clear(dialog, id)                    # a source edit blanks the answer
     _mark_cells_dirty()
     return _json({"ok": True, "message": f"edited cell {id}"})
 
@@ -3772,6 +3802,7 @@ def cell_save(id: str, content: str = ""):
     backend = STATE["backend"]
     if hasattr(backend, "update"):
         backend.update(cur("dialog"), id, content)
+        _ai_edited_clear(cur("dialog"), id)             # a source edit blanks the answer
     return Stream()
 
 
@@ -3803,6 +3834,7 @@ def cell_answer_save(id: str, output: str = ""):
         return Stream()
     if hasattr(bk, "update_output"):
         bk.update_output(d, id, output)
+        _ai_edited_clear(d, id)         # now the user's own text
     return _answer_view(m)
 
 
@@ -3824,6 +3856,7 @@ def cell_type(id: str, msg_type: str = "code"):
     backend = STATE["backend"]
     if hasattr(backend, "set_type"):
         m = backend.set_type(cur("dialog"), id, msg_type)
+        _ai_edited_clear(cur("dialog"), id)             # the answer is reset with the type
         if m is not None:
             set_cur("editing", m.id)
             set_cur("focus_start", m.id)     # cursor at the start; 'nearest' scroll (no jump)
@@ -3920,6 +3953,7 @@ def cell_exec(id: str):
     """Re-run a cell's stored source without editing (the rendered-view Run/Ask)."""
     backend = STATE["backend"]
     m = _msg_by_id(backend, cur("dialog"), id)
+    _ai_edited_clear(cur("dialog"), id)                 # a re-run replaces the edited answer
     _apply_selected_model(backend, cur("dialog"), m)    # picker is authoritative on run
     if m is not None and m.msg_type == "prompt" and _can_stream(backend, m.model):
         m.output = ""                                     # clear stale answer to re-stream
