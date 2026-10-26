@@ -145,7 +145,7 @@ try:
         notebook); an unknown language → plain text. `fmt` selects the palette,
         defaulting to the class-based, theme-following style of runnable cells."""
         try:
-            lexer = get_lexer_by_name(lang) if lang else _ShellPythonLexer()
+            lexer = get_lexer_by_name(lang) if lang not in ("", "python") else _ShellPythonLexer()
         except ClassNotFound:
             lexer = get_lexer_by_name("text")
         return _pyg_highlight(src or "", lexer, fmt or _pyg_fmt)

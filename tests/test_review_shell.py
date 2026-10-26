@@ -12,7 +12,6 @@ from server import kernel_server as ks
 def dialog():
     name = f"shell-{time.monotonic_ns()}"
     yield name
-    ks.reset(name) if hasattr(ks, "reset") else None
 
 
 def run(d, code):
@@ -53,7 +52,7 @@ def test_capture(dialog):
     assert out == "['a', 'b']"
 
 
-def test_stream_and_stop(dialog):
+def test_stream(dialog):
     rid = ks.exec_start(dialog, "!echo a; sleep 2; echo b")
     deadline = time.time() + 5
     while time.time() < deadline:
@@ -65,7 +64,9 @@ def test_stream_and_stop(dialog):
     while not ks.exec_poll(dialog, rid)["done"]:
         time.sleep(0.05)
 
-    rid = ks.exec_start(dialog, "!sh -c 'echo $$; exec sleep 30'")
+
+def _stop_and_check(dialog, cmd):
+    rid = ks.exec_start(dialog, cmd)
     pid = None
     deadline = time.time() + 5
     while time.time() < deadline and pid is None:
@@ -82,6 +83,33 @@ def test_stream_and_stop(dialog):
     time.sleep(0.2)
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_stop(dialog):
+    _stop_and_check(dialog, "!sh -c 'echo $$; exec sleep 30'")
+
+
+def test_stop_kills_sigterm_ignoring_child(dialog):
+    _stop_and_check(dialog, "!sh -c 'trap \"\" TERM; echo $$; while :; do sleep 1; done'")
+
+
+def test_background_job_does_not_hang_cell(dialog):
+    t0 = time.time()
+    run(dialog, "!sleep 4 &\nprint('done')")
+    assert time.time() - t0 < 3
+
+
+def test_error_after_bang_reports_real_line(dialog):
+    assert "line 2" in run(dialog, "!ls\ndef (:")
+
+
+def test_crlf_bang(dialog):
+    assert run(dialog, "!echo hi\r\nprint(1)") == "hi\n1"
+
+
+def test_render_code_highlights_bang():
+    from dandelion import app
+    assert 'class="err"' not in str(app.render_code("!ls -la\nx = 1\n"))
 
 
 def test_highlight_bang_line():

@@ -40,7 +40,6 @@ import linecache
 import os
 import re
 import contextlib
-import functools
 import shutil
 import signal
 import subprocess
@@ -286,7 +285,7 @@ def _bang_rewrite(code: str) -> str | None:
     """Rewrite `!cmd` / `x = !cmd` lines into `__dandelion_sh__(...)` calls, one line
     in and one line out so line numbers do not move. None when there is no such line."""
     out, found = [], False
-    for line in code.split("\n"):
+    for line in code.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         m = _BANG_ASSIGN.match(line)
         if m:
             line = f"{m[1]}{m[2]} = __dandelion_sh__({m[3]!r}, capture=True)"
@@ -310,11 +309,39 @@ def _sh_env() -> dict:
     return env
 
 
-def _sh(cmd: str, capture: bool = False, ns: dict | None = None):
+def _kill_group(pgid: int) -> None:
+    """SIGTERM the whole process group, wait up to 2 s for it to empty, then SIGKILL
+    whatever is left (a child that ignores SIGTERM). Shielded against a second Stop."""
+    def alive() -> bool:
+        try:
+            os.killpg(pgid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + 2.0
+    try:
+        while alive() and time.monotonic() < deadline:
+            time.sleep(0.02)
+    except BaseException:  # noqa: BLE001 — a second Stop must not skip the SIGKILL
+        pass
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _sh(cmd: str, capture: bool = False):
     """Run `cmd` through bash, streaming its output into the cell's stdout (or
     returning it as a list of lines when `capture`). The wait loop polls so the
     async /exec_stop (KeyboardInterrupt) can land; the child's process group is
     then killed."""
+    ns = sys._getframe(1).f_globals     # the cell's namespace (no self-referencing ref)
     out = sys.stdout
     chunks: list[str] = []
     sink = chunks.append if capture else out.write
@@ -339,20 +366,16 @@ def _sh(cmd: str, capture: bool = False, ns: dict | None = None):
     try:
         while proc.poll() is None:
             time.sleep(0.05)
+        # A backgrounded child (`cmd &`) can hold the pipe open after bash exits;
+        # give the output a moment to drain, then let the cell finish.
+        deadline = time.monotonic() + 1.0
+        while reader.is_alive() and time.monotonic() < deadline:
+            reader.join(0.05)
     except BaseException:
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(proc.pid, sig)
-            except ProcessLookupError:
-                break
-            try:
-                proc.wait(timeout=2)
-                break
-            except subprocess.TimeoutExpired:
-                continue
+        _kill_group(proc.pid)
+        proc.wait()
         reader.join(timeout=2)
         raise
-    reader.join()
     if ns is not None:
         ns["_exit_code"] = proc.returncode
     if proc.returncode:
@@ -384,15 +407,15 @@ def _execute(dialog: str, code: str, buf: io.StringIO, rich_out: list) -> str | 
             try:
                 tree = ast.parse(rewritten, mode="exec")
                 run_code_src = rewritten
-            except SyntaxError:
-                pass
+            except SyntaxError as e2:
+                e = e2          # the rewrite keeps line numbers: report the real error
         if tree is None:
             buf.write(f"SyntaxError: {e}")
             return f"SyntaxError: {e}"
     last_expr = _split_last_expr(run_code_src, tree)
     filename = _cell_filename(code)       # the ORIGINAL source: tracebacks show `!ls`
     ns = _ns(dialog)
-    ns["__dandelion_sh__"] = functools.partial(_sh, ns=ns)
+    ns["__dandelion_sh__"] = _sh
     err = None
     try:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf), \
